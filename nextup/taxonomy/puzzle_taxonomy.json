@@ -1,0 +1,601 @@
+{
+  "version": "1.0.0",
+  "categories": {
+    "A": "Arithmetic & Precision",
+    "B": "Access Control & Authorization",
+    "C": "State & Storage",
+    "D": "External Dependencies & Oracles",
+    "E": "Economic & DeFi Logic",
+    "F": "Control Flow & Ordering",
+    "G": "Token & Asset Handling",
+    "H": "Ordering & Timing",
+    "I": "Validation & Invariants"
+  },
+  "types": [
+    {
+      "id": "A01",
+      "name": "ROUNDING_FLOOR",
+      "category": "A",
+      "description": "Value computation rounded down (floor division, truncation toward zero)",
+      "markers": {
+        "solidity": ["mulDiv", "/ (integer division)", "Math.floor", "mulDivDown"],
+        "rust_cosmwasm": ["checked_mul_dec_floor", "checked_div_floor", "into_int()", "checked_multiply_ratio_floor"],
+        "move": ["/ (integer division)", "math::mul_div"],
+        "c_cpp": ["a / b (integer division)", "trunc()", "floor()", "(int)(float_val)"]
+      },
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "A02",
+      "name": "ROUNDING_CEIL",
+      "category": "A",
+      "description": "Value computation rounded up (ceiling division)",
+      "markers": {
+        "solidity": ["mulDivUp", "ceilDiv", "(a + b - 1) / b"],
+        "rust_cosmwasm": ["checked_mul_dec_ceil", "checked_div_ceil", "checked_multiply_ratio_ceil", "into_coins_ceil"],
+        "move": ["math::mul_div_ceil", "(a + b - 1) / b"],
+        "c_cpp": ["ceil()", "ceilf()", "(a + b - 1) / b", "DIV_ROUND_UP"]
+      },
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "A03",
+      "name": "MIXED_ROUNDING_DIRECTION",
+      "category": "A",
+      "description": "Floor and ceil used in the same computation flow where rounding should be consistent",
+      "markers": {
+        "solidity": ["both mulDiv and mulDivUp in same function"],
+        "rust_cosmwasm": ["both _floor and _ceil in same function or caller chain"],
+        "move": ["both mul_div and mul_div_ceil in same flow"],
+        "c_cpp": ["both floor() and ceil() in same function", "trunc vs round in same flow"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "A04",
+      "name": "PRECISION_TRUNCATION",
+      "category": "A",
+      "description": "Conversion between different decimal precisions that loses information",
+      "markers": {
+        "solidity": ["uint256 to uint128", "downcast", "SafeCast"],
+        "rust_cosmwasm": ["checked_into_dec", "into_int()", "value_of_unit_amount", "Udec128 to Uint128"],
+        "move": ["(value as u64)", "cast"],
+        "c_cpp": ["(int)double_val", "static_cast<int>", "(uint32_t)uint64_val", "narrow_cast"]
+      },
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "A05",
+      "name": "MULT_BEFORE_DIV",
+      "category": "A",
+      "description": "Multiplication before division ordering that could overflow or lose precision depending on operand sizes",
+      "markers": {
+        "solidity": ["a * b / c without FullMath"],
+        "rust_cosmwasm": ["checked_mul then checked_div without ratio helper"],
+        "move": ["a * b / c"],
+        "c_cpp": ["a * b / c without overflow check", "multiply then divide without __int128"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "A06",
+      "name": "CHECKED_ARITHMETIC_GAP",
+      "category": "A",
+      "description": "Mix of checked and unchecked arithmetic operations in the same flow",
+      "markers": {
+        "solidity": ["unchecked { } block near checked ops", "assembly { } math"],
+        "rust_cosmwasm": ["-= operator", "+= operator", "wrapping_add", "wrapping_sub"],
+        "move": ["arithmetic without abort guard"],
+        "c_cpp": ["__builtin_add_overflow near raw +", "SafeInt<> mixed with unchecked ops"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "A07",
+      "name": "ZERO_AMOUNT_PASSTHROUGH",
+      "category": "A",
+      "description": "Code path where zero or dust amount can proceed without rejection",
+      "markers": {
+        "solidity": ["require(amount > 0) missing", "no zero check before transfer"],
+        "rust_cosmwasm": ["missing is_non_zero()", "guard placed after state mutation"],
+        "move": ["assert!(amount > 0) missing"],
+        "c_cpp": ["missing size > 0 check", "no null/zero validation before operation"]
+      },
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "B01",
+      "name": "OWNER_ONLY",
+      "category": "B",
+      "description": "Function gated by owner/admin/governance check",
+      "markers": {
+        "solidity": ["onlyOwner", "onlyAdmin", "onlyRole", "msg.sender == owner"],
+        "rust_cosmwasm": ["ctx.sender == owner", "query_owner", "ensure_admin"],
+        "move": ["signer::address_of(admin)", "assert!(signer == owner)"],
+        "c_cpp": ["if (role != ADMIN)", "assert(is_authorized())", "require_permission()"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "B02",
+      "name": "SELF_CALLBACK_GATE",
+      "category": "B",
+      "description": "Function gated by sender == contract address (callback/internal pattern)",
+      "markers": {
+        "solidity": ["msg.sender == address(this)", "onlySelf"],
+        "rust_cosmwasm": ["ctx.sender == ctx.contract", "ensure!(info.sender == env.contract.address)"],
+        "move": ["@module_addr"],
+        "c_cpp": ["callback from self", "internal-only function via function pointer"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "B03",
+      "name": "NO_ACCESS_CONTROL",
+      "category": "B",
+      "description": "Public/external function with no sender validation that modifies state or moves funds",
+      "markers": {
+        "solidity": ["external/public without modifier", "no require(msg.sender)"],
+        "rust_cosmwasm": ["no sender check in execute handler"],
+        "move": ["public entry fun without signer check"],
+        "c_cpp": ["public API function without caller validation", "exported function without auth"]
+      },
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "B04",
+      "name": "GENESIS_BYPASS",
+      "category": "B",
+      "description": "Special authorization bypass for genesis/initialization context",
+      "markers": {
+        "solidity": ["initializer", "constructor-only"],
+        "rust_cosmwasm": ["GENESIS_SENDER", "instantiate"],
+        "move": ["init_module"],
+        "c_cpp": ["initialization-only path", "first-run setup", "config_init()"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "B05",
+      "name": "PAUSE_GATE",
+      "category": "B",
+      "description": "Function gated by pause/circuit-breaker state",
+      "markers": {
+        "solidity": ["whenNotPaused", "require(!paused)"],
+        "rust_cosmwasm": ["ensure!(!paused)", "is_paused"],
+        "move": ["assert!(!is_paused)"],
+        "c_cpp": ["if (is_paused) return", "assert(!shutdown)", "check_not_halted()"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "C01",
+      "name": "LOOP_STORAGE_MUTATION",
+      "category": "C",
+      "description": "Loop body that reads or writes persistent storage per iteration",
+      "markers": {
+        "solidity": ["storage write inside for/while", "mapping[i] = inside loop"],
+        "rust_cosmwasm": [".save() inside loop", ".remove() inside loop", "STORAGE.update inside loop"],
+        "move": ["borrow_global_mut inside loop", "move_to inside loop"],
+        "c_cpp": ["global/static write inside for/while", "shared_state[i] = inside loop"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "C02",
+      "name": "UNBOUNDED_ITERATION",
+      "category": "C",
+      "description": "Loop over user-influenced or dynamically-sized collection with no hard cap, or cap set by admin",
+      "markers": {
+        "solidity": ["for(i=0; i<array.length", "while(queue.length)"],
+        "rust_cosmwasm": [".range(..) without .take()", "params.limit as bound"],
+        "move": ["vector::length without cap", "while (i < len)"],
+        "c_cpp": ["for(i=0; i<vec.size()", "while(!queue.empty())", "unbounded linked list traversal"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "C03",
+      "name": "READ_WRITE_GAP",
+      "category": "C",
+      "description": "State read and state write to the same variable separated by significant logic or external call",
+      "markers": {
+        "solidity": ["balance[x] read ... external call ... balance[x] write"],
+        "rust_cosmwasm": ["STORAGE.load() ... Message::execute ... STORAGE.save()"],
+        "move": ["borrow_global ... call ... move_to"],
+        "c_cpp": ["read global → call external → write global", "load then store with thread yield between"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "C04",
+      "name": "DELETE_IN_LOOP",
+      "category": "C",
+      "description": "Deletion from a map/set/vec inside a loop iterating that same or related collection",
+      "markers": {
+        "solidity": ["delete array[i] inside loop", "mapping delete inside iteration"],
+        "rust_cosmwasm": [".remove() inside iteration", "ORDERS.remove inside for"],
+        "move": ["vector::remove inside while"],
+        "c_cpp": ["erase() inside iterator loop", "free() inside iteration", "vector::erase in for loop"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "C05",
+      "name": "COUNTER_INCREMENT",
+      "category": "C",
+      "description": "Auto-incrementing ID or nonce counter",
+      "markers": {
+        "solidity": ["nonce++", "nextId++", "_tokenIds.increment()"],
+        "rust_cosmwasm": ["NEXT_ORDER_ID.update", "id += 1"],
+        "move": ["counter.value = counter.value + 1"],
+        "c_cpp": ["next_id++", "sequence_number++", "atomic_fetch_add"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "C06",
+      "name": "COLLECT_THEN_ITERATE",
+      "category": "C",
+      "description": "Pattern of collecting into a Vec/array before iterating (snapshot isolation vs live iteration)",
+      "markers": {
+        "solidity": ["copy array then loop"],
+        "rust_cosmwasm": [".collect::<Vec<_>>() then for"],
+        "move": ["copy vector then iterate"],
+        "c_cpp": ["copy container then iterate", "snapshot vector before loop"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "D01",
+      "name": "ORACLE_PRICE_DEP",
+      "category": "D",
+      "description": "Computation that depends on an external oracle price feed",
+      "markers": {
+        "solidity": ["latestRoundData()", "getPrice()", "consult()"],
+        "rust_cosmwasm": ["OracleQuerier", "query_price", "oracle_price"],
+        "move": ["oracle::get_price", "pyth::get_price"],
+        "c_cpp": ["external price feed", "get_price() RPC", "oracle API call"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "D02",
+      "name": "ORACLE_STALENESS",
+      "category": "D",
+      "description": "Oracle staleness check with a specific time window",
+      "markers": {
+        "solidity": ["updatedAt + maxDelay", "block.timestamp - updatedAt"],
+        "rust_cosmwasm": ["MAX_ORACLE_STALENESS", "staleness"],
+        "move": ["timestamp check on oracle data"],
+        "c_cpp": ["timestamp check on fetched data", "MAX_AGE comparison"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "D03",
+      "name": "CROSS_CONTRACT_CALL",
+      "category": "D",
+      "description": "Message or call sent to another contract (deferred or immediate)",
+      "markers": {
+        "solidity": [".call()", ".transfer()", "IERC20.safeTransfer", "interface.function()"],
+        "rust_cosmwasm": ["Message::execute", "Message::transfer", "SubMessage::reply_on"],
+        "move": ["coin::transfer", "aptos_account::transfer"],
+        "c_cpp": ["dlopen/dlsym", "callback function pointer", "RPC call", "extern function call"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "D04",
+      "name": "QUERY_DEPENDENCY",
+      "category": "D",
+      "description": "Read-time dependency on external contract state that could change between read and use",
+      "markers": {
+        "solidity": ["IERC20.balanceOf()", "external.getState()"],
+        "rust_cosmwasm": ["ctx.querier.query_", "QuerierWrapper"],
+        "move": ["borrow_global on external module"],
+        "c_cpp": ["read external state via API/RPC", "getState() from external module", "shared memory read from other process"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "D05",
+      "name": "ORACLE_ERROR_SWALLOWED",
+      "category": "D",
+      "description": "Oracle or external call failure handled by skipping/logging rather than reverting",
+      "markers": {
+        "solidity": ["try/catch with continue", "(bool success,) = .call; if(!success) continue"],
+        "rust_cosmwasm": ["Err(_) => { tracing::error", "if let Ok(price) = ... else continue"],
+        "move": ["if (option::is_none) { return }"],
+        "c_cpp": ["if (ret != 0) continue", "error logged but not propagated", "catch (...) { /* ignore */ }"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "E01",
+      "name": "FIRST_DEPOSITOR_PATH",
+      "category": "E",
+      "description": "Different code path for first liquidity provider vs subsequent providers",
+      "markers": {
+        "solidity": ["totalSupply == 0", "if (liquidity == 0)"],
+        "rust_cosmwasm": ["if supply.is_zero()", "MINIMUM_LIQUIDITY"],
+        "move": ["if (total_supply == 0)"],
+        "c_cpp": ["if (total == 0)", "first initialization path", "empty state special case"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "E02",
+      "name": "PROPORTIONAL_SHARE",
+      "category": "E",
+      "description": "LP token or share amount calculated as ratio of total supply",
+      "markers": {
+        "solidity": ["amount * totalSupply / totalAssets", "shares = deposit * supply / balance"],
+        "rust_cosmwasm": ["supply * mint_ratio", "checked_multiply_ratio"],
+        "move": ["amount * total_supply / total_assets"],
+        "c_cpp": ["amount * total / pool_size", "proportional allocation calculation"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "E03",
+      "name": "FEE_COMPUTATION",
+      "category": "E",
+      "description": "Fee calculated as a rate applied to an amount",
+      "markers": {
+        "solidity": ["amount * feeRate / FEE_DENOMINATOR", "fee = amount.mul(rate)"],
+        "rust_cosmwasm": ["checked_mul_dec(fee_rate)", "1 - fee_rate"],
+        "move": ["amount * fee_bps / 10000"],
+        "c_cpp": ["amount * fee_rate / FEE_BASE", "fee = value * bps / 10000"]
+      },
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "E04",
+      "name": "SLIPPAGE_PROTECTION",
+      "category": "E",
+      "description": "User-specified minimum output, maximum input, or slippage tolerance",
+      "markers": {
+        "solidity": ["require(amountOut >= minAmountOut)", "amountOutMin"],
+        "rust_cosmwasm": ["minimum_output", "ensure!(output >= min)"],
+        "move": ["assert!(amount_out >= min_amount_out)"],
+        "c_cpp": ["assert(output >= min_output)", "minimum amount check"]
+      },
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "E05",
+      "name": "PRICE_FROM_RESERVES",
+      "category": "E",
+      "description": "Price derived from pool reserve ratio (manipulable via swaps)",
+      "markers": {
+        "solidity": ["reserve0 / reserve1", "getAmountOut(reserves)"],
+        "rust_cosmwasm": ["quote_reserve / base_reserve", "marginal_price"],
+        "move": ["reserve_x / reserve_y"],
+        "c_cpp": ["reserve_a / reserve_b", "price from pool ratio"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "E06",
+      "name": "PASSIVE_ORDER_GEN",
+      "category": "E",
+      "description": "Orders or positions generated algorithmically by the protocol (not by users)",
+      "markers": {
+        "solidity": ["auto-generated limit orders"],
+        "rust_cosmwasm": ["reflect_curve", "passive order", "resting_order_book"],
+        "move": ["auto-fill orders"],
+        "c_cpp": ["auto-generated orders", "algorithmic order placement"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "E07",
+      "name": "CLEARING_PRICE_SELECTION",
+      "category": "E",
+      "description": "Price chosen from a range of valid prices in an auction or matching engine",
+      "markers": {
+        "solidity": ["clearing price", "auction settlement"],
+        "rust_cosmwasm": ["clearing_price", "mid_price", "uniform price auction"],
+        "move": ["settlement_price"],
+        "c_cpp": ["clearing_price", "auction settlement price", "match_price"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "E08",
+      "name": "MINIMUM_SIZE_CHECK",
+      "category": "E",
+      "description": "Minimum order, deposit, or transaction size validation",
+      "markers": {
+        "solidity": ["require(amount >= MIN)", "minDeposit"],
+        "rust_cosmwasm": ["MINIMUM_LIQUIDITY", "ensure!(amount >= min)"],
+        "move": ["assert!(amount >= MIN_AMOUNT)"],
+        "c_cpp": ["assert(amount >= MIN_SIZE)", "minimum transaction threshold"]
+      },
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "F01",
+      "name": "CRON_BATCH",
+      "category": "F",
+      "description": "Function triggered by cron/keeper/bot that batch-processes multiple items",
+      "markers": {
+        "solidity": ["keeper pattern", "upkeep", "performUpkeep"],
+        "rust_cosmwasm": ["cron_execute", "BeginBlocker"],
+        "move": ["@aptos_framework::block"],
+        "c_cpp": ["timer/cron handler", "batch_process()", "scheduled task execution"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "F02",
+      "name": "CANCEL_BEFORE_CREATE",
+      "category": "F",
+      "description": "Cancellation/deletion processed before creation in the same transaction or batch",
+      "markers": {
+        "solidity": ["process cancels then creates in same tx"],
+        "rust_cosmwasm": ["cancellations processed before creations", "cancel_orders then create_orders"],
+        "move": ["remove before add in same entry"],
+        "c_cpp": ["process cancels then creates in same batch", "remove before add"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "F03",
+      "name": "MULTI_HOP_CHAIN",
+      "category": "F",
+      "description": "Sequential operations where output of step N feeds input of step N+1",
+      "markers": {
+        "solidity": ["multi-hop swap", "path[]", "exactInput(path)"],
+        "rust_cosmwasm": ["route.iter().fold", "output feeds next swap"],
+        "move": ["for step in route"],
+        "c_cpp": ["output of step N feeds step N+1", "pipeline/chain processing", "route iteration"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "F04",
+      "name": "REPLY_ON_ERROR",
+      "category": "F",
+      "description": "Error handling via reply/callback pattern where state may have partially committed",
+      "markers": {
+        "solidity": ["try/catch with state rollback", "revert in callback"],
+        "rust_cosmwasm": ["SubMessage::reply_on_error", "reply()", "ReplyOn::Error"],
+        "move": ["abort with partial state"],
+        "c_cpp": ["error callback with partial state", "rollback on error", "exception handler with committed state"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "F05",
+      "name": "EARLY_RETURN_BRANCH",
+      "category": "F",
+      "description": "Conditional early return that skips subsequent state updates or validation",
+      "markers": {
+        "solidity": ["if (...) return early", "guard clause before state update"],
+        "rust_cosmwasm": ["if condition { return Ok(()) }", "early return before save"],
+        "move": ["if (condition) return"],
+        "c_cpp": ["if (...) return early", "guard clause before state update", "early exit skipping cleanup"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "G01",
+      "name": "FUND_VERIFICATION",
+      "category": "G",
+      "description": "Assertion that sent/attached funds match expected amounts",
+      "markers": {
+        "solidity": ["require(msg.value == price)", "IERC20.balanceOf check"],
+        "rust_cosmwasm": ["ensure!(funds ==", "info.funds.amount_of"],
+        "move": ["assert!(coin::value(&coin) >= amount)"],
+        "c_cpp": ["assert(received == expected)", "balance check before/after transfer"]
+      },
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "G02",
+      "name": "REFUND_CALCULATION",
+      "category": "G",
+      "description": "Computation of excess tokens to return to user after an operation",
+      "markers": {
+        "solidity": ["refund = msg.value - cost", "transfer(excess)"],
+        "rust_cosmwasm": ["refunds = funds - deposits + cancel_refunds", "TransferBuilder"],
+        "move": ["coin::extract(&mut coin, refund_amount)"],
+        "c_cpp": ["refund = sent - used", "return excess to caller"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "G03",
+      "name": "MINT_AND_BURN",
+      "category": "G",
+      "description": "Token minting or burning via external call or internal supply modification",
+      "markers": {
+        "solidity": ["_mint()", "_burn()", "totalSupply +="],
+        "rust_cosmwasm": ["bank::ExecuteMsg::Mint", "bank::ExecuteMsg::Burn"],
+        "move": ["coin::mint", "coin::burn", "managed_fungible_asset::mint"],
+        "c_cpp": ["create_token()", "destroy_token()", "supply modification"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "G04",
+      "name": "DUST_ACCUMULATION",
+      "category": "G",
+      "description": "Repeated rounding in the same direction that accumulates small residual amounts",
+      "markers": {
+        "solidity": ["floor in loop", "truncation applied per-iteration"],
+        "rust_cosmwasm": ["rounding inside order fill loop", "into_coins_floor in batch"],
+        "move": ["truncation per iteration"],
+        "c_cpp": ["truncation per iteration in loop", "repeated rounding in same direction"]
+      },
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "H01",
+      "name": "BLOCK_HEIGHT_DISCRIMINATION",
+      "category": "H",
+      "description": "Logic that treats current-block items differently from previous-block items",
+      "markers": {
+        "solidity": ["block.number comparison", "if (createdBlock == block.number)"],
+        "rust_cosmwasm": ["created_at_block_height < current_block_height"],
+        "move": ["block::get_current_block_height()"],
+        "c_cpp": ["ledger_sequence comparison", "block/round number check", "timestamp-based ordering"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "H02",
+      "name": "MAKER_TAKER_SPLIT",
+      "category": "H",
+      "description": "Different fee rates or treatment based on order timing (maker vs taker)",
+      "markers": {
+        "solidity": ["makerFee vs takerFee"],
+        "rust_cosmwasm": ["maker_fee_rate", "taker_fee_rate", "block height determines fee"],
+        "move": ["maker_fee", "taker_fee"],
+        "c_cpp": ["maker_fee vs taker_fee", "different rates by order type/timing"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "H03",
+      "name": "ORDER_ID_MANIPULATION",
+      "category": "H",
+      "description": "Bit manipulation or encoding on IDs for sorting/indexing purposes",
+      "markers": {
+        "solidity": ["packed encoding", "id << bits | data"],
+        "rust_cosmwasm": ["!order_id", "bitwise NOT for ordering"],
+        "move": ["id manipulation for sorting"],
+        "c_cpp": ["id << bits | data", "packed encoding for sorting", "bitwise ID construction"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "I01",
+      "name": "INVARIANT_PRESERVATION",
+      "category": "I",
+      "description": "Explicit or implicit mathematical invariant (e.g., x*y=k, total_shares tracks total_assets)",
+      "markers": {
+        "solidity": ["x * y >= k", "invariant check"],
+        "rust_cosmwasm": ["constant product", "k = a * b"],
+        "move": ["assert invariant"],
+        "c_cpp": ["assert(a + b == total)", "balance invariant check", "consistency assertion"]
+      },
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "I02",
+      "name": "BALANCE_ACCOUNTING",
+      "category": "I",
+      "description": "Assertion or implicit assumption that inflows equal outflows (plus fees/minus fees)",
+      "markers": {
+        "solidity": ["balance before/after check", "transfer amount == received"],
+        "rust_cosmwasm": ["inflows.into_coins_floor", "outflows.into_coins_ceil", "fee accounting"],
+        "move": ["balance check before/after"],
+        "c_cpp": ["inflows == outflows + fees", "balance before/after reconciliation"]
+      },
+      "typical_direction": "neutral"
+    }
+  ]
+}
