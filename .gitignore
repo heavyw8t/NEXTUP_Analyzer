@@ -4,3 +4,6 @@ CHANGELOG.md
 # Python caches
 __pycache__/
 *.pyc
+
+# Audit working directory (separate repo, not tracked here)
+2025-09-super-dca-heavyw8t/

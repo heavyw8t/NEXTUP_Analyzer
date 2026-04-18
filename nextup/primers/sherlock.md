@@ -210,6 +210,7 @@ Note: Informational findings should NOT claim exploitability. If they do, re-cla
 2. **Internal Title**: `# {C|H|M|L|I}-NN · [Title]` matching the filename.
 3. **Headings**: Use markdown `##` for main sections, `###` for subsections
 4. **Code References**: Backticks for function names, file names, line anchors (`file.cpp:123`)
+4a. **Line Numbers**: Include `file.ext:NNN` line anchors ONLY inside the Root Cause section. Every other section (Summary, Impact, Attack Path, Mitigation, Anchors footer, etc.) must reference files by name only (e.g., `AMMDeposit.cpp`), never with line numbers. Rationale: line numbers drift across commits and add noise outside the one section where precise location matters.
 5. **Numbers**: Spell out single digits (one, two), numerals for larger values
 6. **Emphasis**: **bold** for key vulnerability concepts, *italics* for technical nuance
 7. **Thresholds**: Explicitly state Sherlock-extended criteria met (Critical / >1% AND >$10 / >0.01% AND >$10 / bounded-Low / Info-only)
