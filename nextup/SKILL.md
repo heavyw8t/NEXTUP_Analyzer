@@ -101,11 +101,13 @@ Default if still unset: `middleweight`
 
 ### Step 0b: Detect Language
 
-Scan the scope path for file extensions:
-- `.sol` → Solidity/EVM → pattern hints: `solidity_evm.md`
-- `.rs` + (Cargo.toml with cosmwasm/grug/sylvia) → Rust/CosmWasm → pattern hints: `rust_cosmwasm.md`
-- `.move` → Move (check for `aptos` or `sui` in Move.toml) → pattern hints: `move.md`
-- `.c`/`.cpp`/`.cc`/`.h`/`.hpp` + (`CMakeLists.txt` or `Makefile`) → C/C++ → pattern hints: `c_cpp.md`
+Scan the scope path for file extensions and framework markers. Resolve `LANGUAGE` to one of `evm`, `solana`, `aptos`, `sui`, `c_cpp`:
+- `.sol` → `evm` → pattern hints: `solidity_evm.md`, taxonomy: `evm.json`
+- `.rs` + `Cargo.toml` with `anchor-lang` or `solana-program` (or `*.rs` containing `#[program]` / `#[derive(Accounts)]`) → `solana` → pattern hints: `solana.md`, taxonomy: `solana.json`
+- `.rs` + `Cargo.toml` with `cosmwasm-std`/`grug`/`sylvia` (no Solana markers) → `solana` pipeline using CosmWasm pattern hints (historical fallback); prefer migrating such targets to a dedicated CosmWasm pipeline when one exists
+- `.move` + `Move.toml` containing `aptos-framework` → `aptos` → pattern hints: `move.md`, taxonomy: `aptos.json`
+- `.move` + `Move.toml` containing `Sui` → `sui` → pattern hints: `move.md`, taxonomy: `sui.json`
+- `.c`/`.cpp`/`.cc`/`.h`/`.hpp` + (`CMakeLists.txt` or `Makefile`) → `c_cpp` → pattern hints: `c_cpp.md`, taxonomy: `c_cpp.json`
 
 If `RUN_MODE == seeder`: language is already known from NEXTUP orchestrator. Read `{SCRATCHPAD}/build_status.md` for language if available.
 
@@ -220,8 +222,9 @@ Spawn one agent:
 Agent(subagent_type="general-purpose", model="opus", prompt="
 {PASTE EXTRACTION AGENT PROMPT with these replacements:}
 - {SCOPE_PATH} = actual scope path
-- {TAXONOMY_PATH} = {NEXTUP_HOME}/taxonomy/puzzle_taxonomy.json
-- {PATTERN_HINTS_PATH} = {NEXTUP_HOME}/extraction/patterns/{language}.md
+- {TAXONOMY_PATH} = {NEXTUP_HOME}/taxonomy/{language}.json
+- {PATTERN_HINTS_PATH} = {NEXTUP_HOME}/extraction/patterns/{pattern_hints_file}
+- {LANGUAGE} = evm | solana | aptos | sui | c_cpp
 - {OUTPUT_PATH} = {NEXTUP_DIR}/pieces.json
 
 {IF RUN_MODE == seeder:}
@@ -247,12 +250,14 @@ Then identify puzzle pieces and write pieces.json.
 Run the combinator:
 
 ```bash
-python3 {NEXTUP_HOME}/combinator/combine.py \
+python3 {NEXTUP_HOME}/combinator/combine_{language}.py \
   {NEXTUP_DIR}/pieces.json \
   {k} \
   {NEXTUP_DIR}/combos_ranked.json \
   --top {TOP_N}
 ```
+
+The combinator script is per-language: `combine_evm.py`, `combine_solana.py`, `combine_aptos.py`, `combine_sui.py`, or `combine_c_cpp.py`. Each loads its own rule and weight files from `{NEXTUP_HOME}/combinator/rules/{language}.json` and `{NEXTUP_HOME}/combinator/weights/{language}.json`.
 
 Read the script output for stats. If 0 survivors, abort with message.
 

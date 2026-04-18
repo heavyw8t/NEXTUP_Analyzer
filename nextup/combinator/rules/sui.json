@@ -1,0 +1,23 @@
+{
+  "min_categories": 2,
+  "require_shared_contract_or_call": true,
+  "require_interaction_link": true,
+  "eliminate_actor_conflict": true,
+  "eliminate_redundant_same_direction_rounding": true,
+  "eliminate_same_function_duplicate": true,
+  "eliminate_read_only_combos": true,
+  "eliminate_pure_defensive": true,
+  "eliminate_no_state_overlap": true,
+  "eliminate_all_neutral_same_context": true,
+  "custom_rules": [
+    "eliminate_immutable_only_combos",
+    "eliminate_partial_ptb_rollback_assumption",
+    "eliminate_owned_object_cross_sender",
+    "eliminate_upgradecap_immutable",
+    "eliminate_cap_gated_no_access_contradiction",
+    "downrank_dof_without_shared_uid",
+    "bonus_version_bump_missing_plus_shared_write",
+    "bonus_ptb_handoff_plus_price_from_reserves",
+    "bonus_treasury_cap_leak_plus_shared_write"
+  ]
+}

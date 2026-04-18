@@ -1,0 +1,525 @@
+{
+  "version": "1.1.0",
+  "language": "evm",
+  "id_prefix": "EVM",
+  "categories": {
+    "A": "Arithmetic & Precision",
+    "B": "Access Control & Authorization",
+    "C": "State & Storage",
+    "D": "Oracles & External Data",
+    "E": "Economic & Market Mechanics",
+    "F": "Temporal & Flow Control",
+    "G": "Value Movement & Accounting",
+    "H": "Ordering & Identity",
+    "I": "Invariants & Reconciliation",
+    "J": "Proxy & Upgradeability",
+    "K": "Low-Level & Assembly",
+    "L": "Reentrancy Variants"
+  },
+  "types": [
+    {
+      "id": "EVM-A01",
+      "name": "ROUNDING_FLOOR",
+      "category": "A",
+      "description": "Integer truncation in Solidity division or mulDiv floor, favoring the protocol when division yields user-owed amounts.",
+      "markers": ["/ (integer division)", "mulDiv(", "mulDivDown(", "Math.mulDiv", "FullMath.mulDiv", "FixedPointMathLib.divWadDown", "rayDiv", "wadDiv"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-A02",
+      "name": "ROUNDING_CEIL",
+      "category": "A",
+      "description": "Ceiling division typically used when computing user-owed inputs (debt, shares owed).",
+      "markers": ["mulDivUp(", "mulDivRoundingUp", "ceilDiv", "(a + b - 1) / b", "FullMath.mulDivRoundingUp", "FixedPointMathLib.divWadUp", "SafeCast.toUint256Up"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-A03",
+      "name": "MIXED_ROUNDING_DIRECTION",
+      "category": "A",
+      "description": "Same computation path mixes floor and ceil (deposit rounds down but redeem rounds down too, etc.).",
+      "markers": ["mulDiv and mulDivUp in same function", "FullMath.mulDiv + FullMath.mulDivRoundingUp pair", "rayDiv and rayDivUp mixed"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-A04",
+      "name": "PRECISION_TRUNCATION",
+      "category": "A",
+      "description": "Narrowing casts that silently drop high bits.",
+      "markers": ["uint256 to uint128 cast", "uint128 to uint64 cast", "SafeCast.toUint128", "SafeCast.toUint96", "SafeCast.toInt128", "int256 to int128", "toUint64", "uint8(x)", "bytes32 truncated to bytes4"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-A05",
+      "name": "MULT_BEFORE_DIV",
+      "category": "A",
+      "description": "Order-sensitive a * b / c that loses precision if divided first or overflows if multiplied first without FullMath.",
+      "markers": ["a * b / c (raw)", "no FullMath.mulDiv", "PRBMath missing", "wadMul followed by wadDiv", "amount * rate / PRECISION"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-A06",
+      "name": "CHECKED_ARITHMETIC_GAP",
+      "category": "A",
+      "description": "unchecked { } block wrapping arithmetic that can cross boundary conditions due to caller inputs; also assembly math outside Solidity 0.8 checks.",
+      "markers": ["unchecked {", "assembly { add", "assembly { sub", "assembly { mul", "pragma solidity ^0.7", "SafeMath.add without overflow guard above it"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-A07",
+      "name": "ZERO_AMOUNT_PASSTHROUGH",
+      "category": "A",
+      "description": "Function accepts amount == 0 without rejecting, allowing dust griefing, event spam, share inflation boundary cases.",
+      "markers": ["missing require(amount > 0)", "missing require(shares != 0)", "no zero-guard before _mint", "no zero-guard before _burn", "transfer(..., 0) allowed"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-B01",
+      "name": "OWNER_ONLY",
+      "category": "B",
+      "description": "Role- or owner-gated state mutator.",
+      "markers": ["onlyOwner", "onlyRole(", "hasRole(", "_checkRole", "AccessControl", "Ownable", "Ownable2Step", "msg.sender == owner", "msg.sender == governance", "DEFAULT_ADMIN_ROLE"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-B02",
+      "name": "SELF_CALLBACK_GATE",
+      "category": "B",
+      "description": "Function only callable when msg.sender == address(this) (multicall internals, reentering own context).",
+      "markers": ["msg.sender == address(this)", "onlySelf modifier", "require(_msgSender() == address(this))", "Multicall internal callback"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-B03",
+      "name": "NO_ACCESS_CONTROL",
+      "category": "B",
+      "description": "external/public state mutator with no sender gate; permissionless entry.",
+      "markers": ["external function without modifier", "public function without modifier", "no require(msg.sender)", "anyone-callable state write"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-B04",
+      "name": "GENESIS_BYPASS",
+      "category": "B",
+      "description": "Initializer, constructor, or first-call-only path that bypasses later restrictions.",
+      "markers": ["constructor", "initializer modifier", "reinitializer(", "_disableInitializers", "__X_init", "firstDepositor branch"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-B05",
+      "name": "PAUSE_GATE",
+      "category": "B",
+      "description": "Pause/circuit-breaker gate.",
+      "markers": ["whenNotPaused", "whenPaused", "Pausable", "require(!paused)", "require(!isShutdown)", "ReentrancyGuardPausable"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-C01",
+      "name": "LOOP_STORAGE_MUTATION",
+      "category": "C",
+      "description": "Storage SSTORE inside a loop body (gas cliff + reordering hazard).",
+      "markers": ["SSTORE inside for", "mapping[i] = inside loop", "push inside loop", "balances[x] -= inside loop"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-C02",
+      "name": "UNBOUNDED_ITERATION",
+      "category": "C",
+      "description": "Loop bound controlled by user-growable array or mapping keyset.",
+      "markers": ["for (uint i=0; i<array.length", "while (queue.length)", "enumerable set iteration without cap", "EnumerableSet length as loop bound", "no max iterations constant"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-C03",
+      "name": "READ_WRITE_GAP",
+      "category": "C",
+      "description": "Read-then-call-then-write on same slot (reentrancy + TOCTOU surface).",
+      "markers": ["SLOAD then external call then SSTORE", "cache value, call, write back", "checks-effects-interactions violation"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-C04",
+      "name": "DELETE_IN_LOOP",
+      "category": "C",
+      "description": "delete inside an index-based loop (iteration invariant broken).",
+      "markers": ["delete array[i] inside for", "array.pop() inside loop", "EnumerableSet.remove inside iteration", "mapping delete inside for"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-C05",
+      "name": "COUNTER_INCREMENT",
+      "category": "C",
+      "description": "Monotonic counter (nonce, tokenId, requestId) that may wrap, collide, or leak ordering.",
+      "markers": ["nextId++", "nonce++", "_tokenIdTracker.increment()", "Counters.Counter", "unchecked { id++ }"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-C06",
+      "name": "COLLECT_THEN_ITERATE",
+      "category": "C",
+      "description": "Snapshot a collection to memory then iterate (vs live iteration).",
+      "markers": ["copy storage array to memory", "length cached to memory", "address[] memory copy = storageArr"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-D01",
+      "name": "ORACLE_PRICE_DEP",
+      "category": "D",
+      "description": "Decision depends on price feed.",
+      "markers": ["latestRoundData()", "latestAnswer()", "getPrice(", "consult(", "IPyth.getPrice", "getRoundData(", "AggregatorV3Interface"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-D02",
+      "name": "ORACLE_STALENESS",
+      "category": "D",
+      "description": "Oracle freshness gate with a concrete time window.",
+      "markers": ["updatedAt + maxDelay", "block.timestamp - updatedAt", "require(updatedAt >", "HEARTBEAT", "MAX_STALENESS", "publishTime check"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-D03",
+      "name": "CROSS_CONTRACT_CALL",
+      "category": "D",
+      "description": "Any .call, interface call, low-level call, or delegatecall to another contract.",
+      "markers": [".call(", ".staticcall(", ".delegatecall(", "IERC20.transfer(", "safeTransfer(", "Address.functionCall", "interface.method("],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-D04",
+      "name": "QUERY_DEPENDENCY",
+      "category": "D",
+      "description": "Read external contract state whose value may change between read and use.",
+      "markers": ["IERC20.balanceOf(", "ICurve.get_virtual_price(", "IVault.totalAssets(", "external view call"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-D05",
+      "name": "ORACLE_ERROR_SWALLOWED",
+      "category": "D",
+      "description": "Oracle / external call wrapped in try/catch where failure is logged or skipped rather than reverted.",
+      "markers": ["try oracle.latestRoundData returns", "try ... catch { continue }", "(bool ok, ) = .call(...); if (!ok)", "catch { emit Error"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-E01",
+      "name": "FIRST_DEPOSITOR_PATH",
+      "category": "E",
+      "description": "Branch for totalSupply == 0 (vault inflation vector).",
+      "markers": ["if (totalSupply() == 0)", "if (totalAssets() == 0)", "MINIMUM_LIQUIDITY constant", "first deposit mints shares == deposit"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-E02",
+      "name": "PROPORTIONAL_SHARE",
+      "category": "E",
+      "description": "Share / LP = amount * supply / assets (ERC4626 style).",
+      "markers": ["shares = assets * supply / totalAssets", "amount.mulDiv(supply, totalAssets", "_convertToShares", "_convertToAssets"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-E03",
+      "name": "FEE_COMPUTATION",
+      "category": "E",
+      "description": "Fee as rate * amount with denominator constant.",
+      "markers": ["amount * feeBps / 10000", "feeRate * amount / 1e18", "PROTOCOL_FEE_DENOMINATOR", "calcFee("],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-E04",
+      "name": "SLIPPAGE_PROTECTION",
+      "category": "E",
+      "description": "Min out / max in guard supplied by caller.",
+      "markers": ["require(amountOut >= minAmountOut)", "amountOutMin", "maxAmountIn", "require(received >= minimum)", "deadline check"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-E05",
+      "name": "PRICE_FROM_RESERVES",
+      "category": "E",
+      "description": "Price derived from pool reserves (Uni V2 spot).",
+      "markers": ["getReserves()", "reserve0 * 1e18 / reserve1", "UniswapV2 quote(", "getAmountOut(reserve0, reserve1)"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-E06",
+      "name": "PASSIVE_ORDER_GEN",
+      "category": "E",
+      "description": "Protocol-generated (not user-submitted) orders, curves, or auto-rebalance positions.",
+      "markers": ["auto-rebalance", "rebalance(", "algorithmic LP placement", "strategy.tend(", "Uniswap V3 auto-LP manager"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-E07",
+      "name": "CLEARING_PRICE_SELECTION",
+      "category": "E",
+      "description": "Auction or batch-matching price choice.",
+      "markers": ["clearingPrice", "settle(", "auctionEnd", "FrankenDAO auction", "batch auction uniform price"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-E08",
+      "name": "MINIMUM_SIZE_CHECK",
+      "category": "E",
+      "description": "Minimum deposit/withdraw/order size.",
+      "markers": ["require(amount >= MIN_DEPOSIT)", "MIN_ORDER_SIZE", "require(shares >= MIN_SHARES)"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-F01",
+      "name": "CRON_BATCH",
+      "category": "F",
+      "description": "Keeper/upkeep batch-processor.",
+      "markers": ["performUpkeep", "checkUpkeep", "keep3r", "Gelato exec", "harvest(", "processQueue(", "rebaseAll("],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-F02",
+      "name": "CANCEL_BEFORE_CREATE",
+      "category": "F",
+      "description": "Same-tx ordering where cancels process before creates (order-book flows).",
+      "markers": ["_cancelOrders(...) before _placeOrders(...)", "process cancels then creates in same tx"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-F03",
+      "name": "MULTI_HOP_CHAIN",
+      "category": "F",
+      "description": "Output of step N feeds step N+1 (swap path, route).",
+      "markers": ["path[i] -> path[i+1]", "exactInput(path", "route.length iteration", "multicall(", "Uniswap V3 path encoding"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-F04",
+      "name": "REPLY_ON_ERROR",
+      "category": "F",
+      "description": "try/catch handler that retains partial state on external revert.",
+      "markers": ["try ... returns ... catch", "bool success, bytes memory ret = .call", "if (!success) emit Fail"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-F05",
+      "name": "EARLY_RETURN_BRANCH",
+      "category": "F",
+      "description": "Early return that skips later state updates or event emits.",
+      "markers": ["if (...) return;", "guard clause before state update", "return 0 before _mint", "short-circuit before accounting"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-G01",
+      "name": "FUND_VERIFICATION",
+      "category": "G",
+      "description": "Assertion that msg.value or received ERC20 equals expected.",
+      "markers": ["require(msg.value ==", "balance before/after subtraction", "require(token.balanceOf(this) - before == amount)"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-G02",
+      "name": "REFUND_CALCULATION",
+      "category": "G",
+      "description": "Excess msg.value or unused input refunded.",
+      "markers": ["refund = msg.value - cost", "payable(msg.sender).transfer(excess)", "Address.sendValue(refund)"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-G03",
+      "name": "MINT_AND_BURN",
+      "category": "G",
+      "description": "Internal _mint/_burn or totalSupply mutation.",
+      "markers": ["_mint(", "_burn(", "totalSupply +=", "ERC20._update", "ERC4626.deposit mints shares"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-G04",
+      "name": "DUST_ACCUMULATION",
+      "category": "G",
+      "description": "Repeated same-direction rounding inside a batch or per-position loop.",
+      "markers": ["per-iteration floor division", "residual dust retained by protocol", "accumulated truncation in fee split"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-H01",
+      "name": "BLOCK_HEIGHT_DISCRIMINATION",
+      "category": "H",
+      "description": "Same-block vs prior-block distinction.",
+      "markers": ["if (createdAt == block.number)", "block.number > lastActionBlock", "sameBlock protection", "flash-sandwich guard on block number"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-H02",
+      "name": "MAKER_TAKER_SPLIT",
+      "category": "H",
+      "description": "Different fee per order role/timing.",
+      "markers": ["makerFee", "takerFee", "isMaker branch", "different fee constant per side"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-H03",
+      "name": "ORDER_ID_MANIPULATION",
+      "category": "H",
+      "description": "Packed ID encoding for sort key.",
+      "markers": ["packed bytes32 ID", "id << bits | data", "abi.encodePacked(price, nonce)", "inverted-priority encoding"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-I01",
+      "name": "INVARIANT_PRESERVATION",
+      "category": "I",
+      "description": "Explicit invariant check (x*y>=k, totalShares tracks totalAssets).",
+      "markers": ["require(x * y >= k)", "invariant check", "assert(totalSupply <= cap)", "K invariant"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-I02",
+      "name": "BALANCE_ACCOUNTING",
+      "category": "I",
+      "description": "Before/after balance reconciliation or inflows == outflows + fees.",
+      "markers": ["uint256 before = token.balanceOf(this)", "uint256 received = token.balanceOf(this) - before", "balance reconciliation"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-J01",
+      "name": "DELEGATECALL_TARGET",
+      "category": "J",
+      "description": "Delegatecall to an address whose code or trust boundary is not fully pinned (user-supplied, mutable, or selected from registry).",
+      "markers": ["delegatecall(", "Address.functionDelegateCall", "_delegate(implementation)", "proxy fallback delegatecall", "library-as-address delegatecall"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-J02",
+      "name": "STORAGE_SLOT_COLLISION",
+      "category": "J",
+      "description": "Two layouts (proxy vs implementation, V1 vs V2, parent vs child in multiple-inheritance) write or read the same slot with different semantics.",
+      "markers": ["bytes32 private constant _SLOT = keccak256(", "EIP-1967 slot constants", "custom assembly sstore to fixed slot", "struct packed near upgrade boundary", "__gap array sized"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "EVM-J03",
+      "name": "INITIALIZER_REENTRY",
+      "category": "J",
+      "description": "initialize / reinitializer(n) can be re-called, called out of order, or called by unintended actor.",
+      "markers": ["initializer modifier", "reinitializer(2)", "_disableInitializers()", "bool initialized flag (not OZ)", "init function without onlyProxy guard"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-J04",
+      "name": "UUPS_AUTHORIZE_GAP",
+      "category": "J",
+      "description": "_authorizeUpgrade missing, empty, or gated by role that lacks timelock.",
+      "markers": ["_authorizeUpgrade(address) internal override", "UUPSUpgradeable", "empty _authorizeUpgrade body", "onlyOwner on _authorizeUpgrade"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-J05",
+      "name": "SELECTOR_CLASH",
+      "category": "J",
+      "description": "Proxy admin function selector collides with implementation function selector, or diamond facet selectors overlap.",
+      "markers": ["TransparentUpgradeableProxy admin methods", "diamondCut(", "IDiamondLoupe", "function selector collision"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-J06",
+      "name": "IMPLEMENTATION_SELFDESTRUCT",
+      "category": "J",
+      "description": "Implementation contract has SELFDESTRUCT, arbitrary delegatecall, or ownable state that lets it be bricked, leaving proxy pointing at empty code.",
+      "markers": ["selfdestruct(", "assembly { selfdestruct", "delegatecall on implementation without init lock", "unprotected kill() on implementation"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-K01",
+      "name": "RAW_CALL_RETURN_IGNORED",
+      "category": "K",
+      "description": "Low-level .call / .send return value discarded (transfer assumed to succeed).",
+      "markers": [".call(", "(bool success, )", "no require(success)", ".send(", ".transfer( on 2300 gas"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-K02",
+      "name": "ASSEMBLY_MEMORY_UNSAFE",
+      "category": "K",
+      "description": "Inline assembly writes past free memory pointer, reads stale memory, or violates memory safety.",
+      "markers": ["assembly {", "mstore(0x40", "free memory pointer not updated", "assembly (\"memory-safe\")", "mload from arbitrary offset"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-K03",
+      "name": "ARBITRARY_CALLDATA_FORWARD",
+      "category": "K",
+      "description": "Function forwards user-supplied target + calldata to .call or .delegatecall without allowlist.",
+      "markers": ["address target, bytes data", "execute(target, data)", "forward low-level call", "multicall with user-controlled targets"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-K04",
+      "name": "RETURNDATA_BOMB",
+      "category": "K",
+      "description": "External call receives large returndata that is copied unconditionally (gas griefing).",
+      "markers": ["returndatacopy(0, 0, returndatasize())", "abi.decode on external return without size guard", "ExcessivelySafeCall missing"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-K05",
+      "name": "TRANSIENT_STORAGE_LEAK",
+      "category": "K",
+      "description": "TSTORE / TLOAD (EIP-1153) leaves transient state visible across nested frames within the same tx in a way the caller did not intend.",
+      "markers": ["tstore(", "tload(", "transient keyword", "solc >=0.8.24 with transient"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "EVM-K06",
+      "name": "CREATE2_ADDRESS_REUSE",
+      "category": "K",
+      "description": "CREATE2 redeployment at same address after SELFDESTRUCT (metamorphic contract), or salted-address predictability used as trust anchor.",
+      "markers": ["create2(", "CREATE2_SALT", "precomputeAddress(salt,", "assembly create2(0, ptr,"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-L01",
+      "name": "CLASSIC_REENTRANCY",
+      "category": "L",
+      "description": "External call in a function that later writes to the same storage the call path can re-read (single-function reentrancy).",
+      "markers": [".call{value:", "ERC20.transfer before state update", "no ReentrancyGuard on payable function", "checks-effects-interactions violated"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-L02",
+      "name": "CROSS_FUNCTION_REENTRANCY",
+      "category": "L",
+      "description": "Reentrancy into a DIFFERENT function that shares state with the caller; nonReentrant on one function only.",
+      "markers": ["nonReentrant on withdraw only", "shared balances mapping between guarded/unguarded", "view function returns mid-call stale state"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-L03",
+      "name": "READ_ONLY_REENTRANCY",
+      "category": "L",
+      "description": "External actor reenters a view/getter of the same protocol (or a dependent consumer) during a callback; consumer trusts the view.",
+      "markers": ["get_virtual_price during remove_liquidity callback", "totalAssets() called from callback", "view-only reentrancy on Curve/Balancer pool", "consumer reads pool state mid-call"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-L04",
+      "name": "ERC777_HOOK_REENTRANCY",
+      "category": "L",
+      "description": "Transfer of ERC777 / ERC1363 / ERC721.safeTransfer / ERC1155 triggers receiver hook that reenters.",
+      "markers": ["safeTransfer on ERC721", "_checkOnERC721Received", "tokensReceived hook", "onERC1155Received", "ERC777 send("],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-L05",
+      "name": "CALLBACK_STATE_DIVERGENCE",
+      "category": "L",
+      "description": "Protocol issues a callback (flash loan, swap callback, flash mint) whose body executes while protocol invariants are temporarily broken.",
+      "markers": ["uniswapV3SwapCallback", "uniswapV2Call", "flashLoan callback", "onFlashLoan(", "IERC3156FlashBorrower", "executeOperation("],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "EVM-L06",
+      "name": "REENTRANCY_GUARD_PROXY_GAP",
+      "category": "L",
+      "description": "ReentrancyGuard state sits in implementation storage but proxy pattern or shared diamond facet lets two facets bypass the guard.",
+      "markers": ["ReentrancyGuardUpgradeable", "_status slot in facet", "diamond facet without shared guard", "multiple proxies sharing guard slot incorrectly"],
+      "typical_direction": "favors_user"
+    }
+  ]
+}

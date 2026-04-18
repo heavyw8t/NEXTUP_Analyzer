@@ -1,0 +1,583 @@
+{
+  "version": "1.1.0",
+  "language": "aptos",
+  "id_prefix": "APT",
+  "categories": {
+    "A": "Arithmetic & Precision",
+    "B": "Access Control & Authorization",
+    "C": "State & Storage",
+    "D": "External Dependencies & Oracles",
+    "E": "Economic & DeFi Logic",
+    "F": "Control Flow & Ordering",
+    "G": "Token & Asset Handling",
+    "H": "Ordering & Timing",
+    "I": "Validation & Invariants",
+    "J": "Abilities",
+    "K": "Resources & Global Storage",
+    "L": "FungibleAsset",
+    "M": "Entry & Access",
+    "N": "Reentrancy via Back-Call"
+  },
+  "types": [
+    {
+      "id": "APT-A01",
+      "name": "ROUNDING_FLOOR",
+      "category": "A",
+      "description": "Integer truncation toward zero via `/` or `mul_div`.",
+      "markers": ["/ (u64/u128 integer division)", "aptos_std::math64::mul_div", "aptos_std::math128::mul_div"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "APT-A02",
+      "name": "ROUNDING_CEIL",
+      "category": "A",
+      "description": "Ceiling division in Move.",
+      "markers": ["(a + b - 1) / b", "math64::mul_div_round", "math128::mul_div_round"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-A03",
+      "name": "MIXED_ROUNDING_DIRECTION",
+      "category": "A",
+      "description": "Floor and ceil mixed in one flow (deposit floor, withdraw ceil or reverse).",
+      "markers": ["both mul_div and mul_div_round in one function or caller chain"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-A04",
+      "name": "PRECISION_TRUNCATION",
+      "category": "A",
+      "description": "Narrowing `as` cast loses information.",
+      "markers": ["(x as u64)", "(x as u32)", "(x as u128) followed by narrowing cast"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "APT-A05",
+      "name": "MULT_BEFORE_DIV",
+      "category": "A",
+      "description": "Raw `a * b / c` risks u64 intermediate overflow before division.",
+      "markers": ["a * b / c without math64::mul_div"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-A06",
+      "name": "CHECKED_ARITHMETIC_GAP",
+      "category": "A",
+      "description": "Move aborts on overflow by default; variant is bypass via widen-then-cast or manual branches.",
+      "markers": ["widen to u128 then cast back with no bound check", "manual wrap helpers", "if (overflow) ... branches"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-A07",
+      "name": "ZERO_AMOUNT_PASSTHROUGH",
+      "category": "A",
+      "description": "Entry function accepts `amount == 0` and proceeds.",
+      "markers": ["missing assert!(amount > 0, E_ZERO)", "coin::value(&c) unguarded", "fungible_asset::amount(&fa) unguarded"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-B01",
+      "name": "SIGNER_GATED",
+      "category": "B",
+      "description": "Function gated by `signer::address_of(s) == @admin` or address field in `Config`.",
+      "markers": ["signer::address_of", "assert!(addr == @admin)", "system_addresses::assert_aptos_framework"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-B03",
+      "name": "NO_ACCESS_CONTROL",
+      "category": "B",
+      "description": "`public entry` or `public` that mutates global state with no `&signer` check, or unchecked `&signer` address.",
+      "markers": ["public entry fun with no signer::address_of", "state-mutating public fun with no signer arg"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-B04",
+      "name": "INIT_MODULE_PATH",
+      "category": "B",
+      "description": "Logic that only runs in `init_module` or guarded by `exists<Config>` / `initialized` flag.",
+      "markers": ["fun init_module(admin: &signer)", "exists<Config>(@addr) gate", "move_to<Config>(...) with no re-init guard"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-B05",
+      "name": "PAUSE_GATE",
+      "category": "B",
+      "description": "Function gated by pause flag in a `Config` resource.",
+      "markers": ["assert!(!config.paused, E_PAUSED)", "borrow_global<Config>(@addr).paused"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-C01",
+      "name": "LOOP_STORAGE_MUTATION",
+      "category": "C",
+      "description": "`borrow_global_mut`, `move_to`, `move_from`, or `Table`/`SmartTable` write per iteration.",
+      "markers": ["borrow_global_mut<T>(addr) in while/vector::for_each", "table::upsert in loop", "smart_table::add in loop"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-C02",
+      "name": "UNBOUNDED_ITERATION",
+      "category": "C",
+      "description": "Loop over user-influenced `vector`/`SmartVector`/`SimpleMap` with no cap.",
+      "markers": ["vector::length(&v) bound with no MAX", "smart_vector::length bound"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-C03",
+      "name": "READ_WRITE_GAP",
+      "category": "C",
+      "description": "`borrow_global` read, external call, write back. Reentrancy-equivalent window via dispatchable FA / closures.",
+      "markers": ["let v = borrow_global<T>(addr) ... other_mod::f(...) ... write"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-C04",
+      "name": "DELETE_IN_LOOP",
+      "category": "C",
+      "description": "`table::remove`, `smart_table::remove`, `vector::remove`/`swap_remove` inside related loop.",
+      "markers": ["vector::remove(&mut v, i) in while (i < len)", "table::remove in loop"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-C05",
+      "name": "COUNTER_INCREMENT",
+      "category": "C",
+      "description": "Auto-incrementing nonce/id in a resource.",
+      "markers": ["counter.value = counter.value + 1", "account::get_sequence_number as app counter"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-C06",
+      "name": "COLLECT_THEN_ITERATE",
+      "category": "C",
+      "description": "Snapshot a collection before iterating.",
+      "markers": ["let snapshot = *collection", "vector::for_each over snapshot"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-D01",
+      "name": "ORACLE_PRICE_DEP",
+      "category": "D",
+      "description": "Decision consumes Pyth / Switchboard / custom price feed.",
+      "markers": ["pyth::pyth::get_price", "pyth::price_feed::get_price", "switchboard::aggregator::latest_value"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-D02",
+      "name": "ORACLE_STALENESS",
+      "category": "D",
+      "description": "Explicit staleness check vs `timestamp::now_seconds()` or Pyth `publish_time`.",
+      "markers": ["timestamp::now_seconds() - publish_time < MAX_AGE", "pyth::price::get_publish_time"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-D03",
+      "name": "CROSS_MODULE_CALL",
+      "category": "D",
+      "description": "Call into another published module (synchronous, statically resolved).",
+      "markers": ["use other_addr::mod", "mod::f(...)", "coin::transfer<T>", "aptos_account::transfer", "primary_fungible_store::transfer"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-D04",
+      "name": "QUERY_DEPENDENCY",
+      "category": "D",
+      "description": "Read-time dependency on state owned by another module that can change.",
+      "markers": ["borrow_global on external resource", "object::owner(obj)", "fungible_asset::balance(store) of external store"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-D05",
+      "name": "ORACLE_ERROR_SWALLOWED",
+      "category": "D",
+      "description": "`option::is_none` branch on oracle fetch returns default or skips validation.",
+      "markers": ["if (option::is_none(&price)) { return ... }", "pyth::get_price_unsafe"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-E01",
+      "name": "FIRST_DEPOSITOR_PATH",
+      "category": "E",
+      "description": "Bootstrap branch executed when total supply is zero.",
+      "markers": ["if (total_supply == 0)", "if (fungible_asset::supply(metadata) == 0)"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-E02",
+      "name": "PROPORTIONAL_SHARE",
+      "category": "E",
+      "description": "Share computed proportional to supply / assets.",
+      "markers": ["amount * total_supply / total_assets", "math64::mul_div(amount, supply, assets)"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-E03",
+      "name": "FEE_COMPUTATION",
+      "category": "E",
+      "description": "Fee computed as basis-points of amount.",
+      "markers": ["amount * fee_bps / 10000", "math64::mul_div(amount, fee_bps, BPS)"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "APT-E04",
+      "name": "SLIPPAGE_PROTECTION",
+      "category": "E",
+      "description": "Minimum-out / maximum-in slippage assertion.",
+      "markers": ["assert!(amount_out >= min_amount_out, E_SLIPPAGE)"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-E05",
+      "name": "PRICE_FROM_RESERVES",
+      "category": "E",
+      "description": "Price derived from pool reserves rather than oracle.",
+      "markers": ["reserve_x / reserve_y", "Thala/LiquidSwap/Pontem reserve reads"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-E06",
+      "name": "PASSIVE_ORDER_GEN",
+      "category": "E",
+      "description": "Passive order curve reflected or auto-filled.",
+      "markers": ["reflect_curve", "auto_fill_orders"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-E07",
+      "name": "CLEARING_PRICE_SELECTION",
+      "category": "E",
+      "description": "Clearing / settlement price selected from candidate set.",
+      "markers": ["clearing_price", "settlement_price field access"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-E08",
+      "name": "MINIMUM_SIZE_CHECK",
+      "category": "E",
+      "description": "Minimum trade / position size gate.",
+      "markers": ["assert!(amount >= MIN_AMOUNT, E_DUST)"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "APT-F02",
+      "name": "CANCEL_BEFORE_CREATE",
+      "category": "F",
+      "description": "Within one entry or script, cancellations before creations over same set.",
+      "markers": ["sequential vector::remove then vector::push_back"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-F03",
+      "name": "MULTI_HOP_CHAIN",
+      "category": "F",
+      "description": "Step N output feeds step N+1 (multi-hop DEX, staged liquidation).",
+      "markers": ["for (i in 0..len) with amount = step(amount, route[i])", "swap_exact_in_route"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-F05",
+      "name": "EARLY_RETURN_BRANCH",
+      "category": "F",
+      "description": "`if (cond) return` before critical state update or assertion.",
+      "markers": ["if (...) return early in body", "if (...) abort E_X early in body"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-G01",
+      "name": "FUND_VERIFICATION",
+      "category": "G",
+      "description": "Asserts supplied `Coin<T>` / `FungibleAsset` matches expected amount and metadata.",
+      "markers": ["assert!(coin::value(&c) >= required, ...)", "assert!(fungible_asset::amount(&fa) == expected, ...)", "assert!(fungible_asset::metadata_from_asset(&fa) == expected_metadata, ...)"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "APT-G02",
+      "name": "REFUND_CALCULATION",
+      "category": "G",
+      "description": "Excess split off and returned via `extract`.",
+      "markers": ["coin::extract(&mut coin, refund)", "fungible_asset::extract(&mut fa, refund)"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-G03",
+      "name": "MINT_AND_BURN",
+      "category": "G",
+      "description": "Mint/burn via stored `MintRef`/`BurnRef` or legacy `MintCapability<T>`/`BurnCapability<T>`.",
+      "markers": ["fungible_asset::mint", "fungible_asset::burn", "coin::mint<T>", "coin::burn<T>", "managed_coin::mint"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-G04",
+      "name": "DUST_ACCUMULATION",
+      "category": "G",
+      "description": "Floor truncation per-position in a loop.",
+      "markers": ["math64::mul_div(...) in per-position loop"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "APT-H01",
+      "name": "BLOCK_HEIGHT_DISCRIMINATION",
+      "category": "H",
+      "description": "Current-block vs past-block item discrimination (~1s Aptos block time).",
+      "markers": ["block::get_current_block_height()", "timestamp::now_microseconds() compare", "created_at == current"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-H02",
+      "name": "MAKER_TAKER_SPLIT",
+      "category": "H",
+      "description": "Maker vs taker fee split in an order book.",
+      "markers": ["maker_fee_bps", "taker_fee_bps fields"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-H03",
+      "name": "ORDER_ID_MANIPULATION",
+      "category": "H",
+      "description": "Bit packing on ids for sort. Interacts with APT-J06: shift amount must be `< bit_width`.",
+      "markers": ["id << k", "id | tag", "!id"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-I01",
+      "name": "INVARIANT_PRESERVATION",
+      "category": "I",
+      "description": "Explicit math invariant (`x*y >= k`, cross-resource sum).",
+      "markers": ["assert!(invariant_ok(...), E_INVARIANT)", "assert!(pool.total == sum_user_amounts, ...)"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-I02",
+      "name": "BALANCE_ACCOUNTING",
+      "category": "I",
+      "description": "Inflows == outflows + fees across `FungibleStore`/`CoinStore` vs internal books.",
+      "markers": ["fungible_asset::balance(store) == config.total_deposited", "coin::balance<T>(addr) == record.deposited"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-J01",
+      "name": "COPY_ON_VALUE_TYPE",
+      "category": "J",
+      "description": "Value-bearing struct (share, receipt, voucher) declared `has copy` -- duplication possible.",
+      "markers": ["struct Ticket has copy, drop { ... }", "any value struct with copy ability"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-J02",
+      "name": "DROP_ON_OBLIGATION",
+      "category": "J",
+      "description": "Hot-potato / obligation struct declared `has drop`, permitting silent discard.",
+      "markers": ["struct FlashReceipt has drop { ... }", "struct LockTicket has drop"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-J03",
+      "name": "STORE_ON_CAPABILITY",
+      "category": "J",
+      "description": "Capability wrapping `MintRef`/`BurnRef`/`TransferRef`/`ExtendRef`/`SignerCapability` declared `has store`, escaping module control.",
+      "markers": ["struct MintCap has store { ref: MintRef }", "struct OwnerCap has store { cap: SignerCapability }"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-J04",
+      "name": "PHANTOM_TYPE_ESCAPE",
+      "category": "J",
+      "description": "`phantom` param with no runtime `type_info::type_of<T>()` check, allowing attacker substitution.",
+      "markers": ["struct Pool<phantom X, phantom Y> has key", "generic fun deposit<T> missing allowlist"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-J05",
+      "name": "ABILITY_DOWNGRADE_VIA_WRAPPER",
+      "category": "J",
+      "description": "Wrapper struct grants abilities the inner value was denied (e.g. `copy` wrapper over non-copy ref).",
+      "markers": ["wrapper abilities wider than inner warrants"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-J06",
+      "name": "BIT_SHIFT_OVERFLOW",
+      "category": "J",
+      "description": "`<<`/`>>` with shift amount reaching/exceeding operand bit width -- VM aborts (Cetus root cause).",
+      "markers": ["1u128 << k where k is parameter or computed", "no assert!(k < 128)"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-K01",
+      "name": "GLOBAL_BORROW_COLLISION",
+      "category": "K",
+      "description": "Two simultaneous borrows on same resource at same address -- runtime abort; often nested calls where callee also does `borrow_global_mut<T>(addr)`.",
+      "markers": ["nested borrow_global_mut<T>(addr) caller + callee on same T/addr", "acquires T chain collision"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-K02",
+      "name": "CAPABILITY_LEAK_VIA_RETURN",
+      "category": "K",
+      "description": "`public` function returns `*Ref` or `SignerCapability`, granting permanent irrevocable rights.",
+      "markers": ["public fun get_mint_ref(): MintRef", "return type containing *Ref/SignerCapability"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-K03",
+      "name": "RESOURCE_INIT_RACE",
+      "category": "K",
+      "description": "Resource created lazily on first use rather than in `init_module`; attacker pre-creates at expected address.",
+      "markers": ["if (!exists<Config>(@addr)) { move_to<Config>(...) } in permissionless fn", "named-object pre-creation"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-K04",
+      "name": "RESOURCE_NEVER_DESTROYED",
+      "category": "K",
+      "description": "No `move_from` path; object holds assets with no stored `DeleteRef`. Storage grows; assets stranded.",
+      "markers": ["resource defined with no move_from<T> anywhere", "generate_delete_ref never called"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-K05",
+      "name": "SIGNER_CAP_AUTH_GAP",
+      "category": "K",
+      "description": "Stored `SignerCapability` used to sign as resource account with no caller-authority gate, or gate on admin-settable field.",
+      "markers": ["account::create_signer_with_capability(&cap) in public fn with no signer assertion"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-K06",
+      "name": "ACQUIRES_NOT_DECLARED",
+      "category": "K",
+      "description": "`acquires` list omits a resource accessed transitively (design smell, refactor-bug surface).",
+      "markers": ["body calls borrow_global<T> or callee that does", "no acquires T in signature"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-L01",
+      "name": "METADATA_NOT_VALIDATED",
+      "category": "L",
+      "description": "Function accepts `FungibleAsset` or reads `FungibleStore` with no metadata match check.",
+      "markers": ["fa: FungibleAsset param with no assert!(fungible_asset::metadata_from_asset(&fa) == expected, ...)", "fungible_asset::balance(store) without metadata check"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-L02",
+      "name": "PRIMARY_STORE_DIRECT_WITHDRAW",
+      "category": "L",
+      "description": "Direct `fungible_asset::withdraw` via held `WithdrawRef` bypasses `dispatchable_fungible_asset::withdraw` hook.",
+      "markers": ["fungible_asset::withdraw(&withdraw_ref, store, amount)", "stored WithdrawRef"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-L03",
+      "name": "SECONDARY_STORE_BYPASS",
+      "category": "L",
+      "description": "Protocol treats `primary_fungible_store` as authoritative but user holds secondary store balance (or reverse).",
+      "markers": ["primary_fungible_store::balance(addr, metadata) as sole read", "no secondary enumeration"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-L04",
+      "name": "SPONSOR_FEE_BYPASS",
+      "category": "L",
+      "description": "Fee-on-transfer / sponsor hook charged but protocol uses pre-hook amount, or bypasses hook entirely.",
+      "markers": ["protocol records amount before dispatch call", "fee field in hook not reflected in books"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-L05",
+      "name": "FREEZE_NOT_CHECKED",
+      "category": "L",
+      "description": "`deposit`/`withdraw` with no `fungible_asset::is_frozen(store)` gate -- DoS when store frozen.",
+      "markers": ["fungible_asset::deposit/withdraw with no is_frozen gate"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-L06",
+      "name": "DEPOSIT_HOOK_MISSING",
+      "category": "L",
+      "description": "Custom FA has mint/burn refs but no `register_dispatch_functions` call; accounting assumes a hook that was never wired.",
+      "markers": ["dispatchable_fungible_asset::register_dispatch_functions absent for asset whose design needs it"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-L07",
+      "name": "WITHDRAW_EVENT_INCONSISTENCY",
+      "category": "L",
+      "description": "Protocol's withdraw event amount differs from framework `fungible_asset` event amount (pre- vs post-fee), corrupting indexers.",
+      "markers": ["custom event::emit before hook", "framework event with different amount after"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-M01",
+      "name": "UNSAFE_PUBLIC_ENTRY",
+      "category": "M",
+      "description": "`public entry` mutates privileged state with no `&signer` assertion, or asserts on a field not the address.",
+      "markers": ["public entry fun ...(s: &signer, ...) with no signer::address_of(s)", "missing &signer while writing admin resource"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-M02",
+      "name": "INTERNAL_VIA_ENTRY",
+      "category": "M",
+      "description": "Logical internal helper exposed as `public`/`public entry`, letting any caller skip the orchestrator.",
+      "markers": ["helpers like _apply_fee, recompute_shares marked public/public entry instead of public(friend)"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-M03",
+      "name": "VIEW_MUTATES",
+      "category": "M",
+      "description": "`#[view]` function mutates state via `borrow_global_mut`/`move_to`/`move_from`/event emit.",
+      "markers": ["#[view] above body containing borrow_global_mut/move_to/move_from/event::emit"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-M04",
+      "name": "RANDOMNESS_COMPOSABILITY",
+      "category": "M",
+      "description": "`randomness::*` usage missing `#[randomness]`, or `public`/`public entry` instead of `entry`-only -- undergasing / test-and-abort.",
+      "markers": ["randomness::u64_range in public entry without #[randomness]", "randomness::* in public fun"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-M05",
+      "name": "FRIEND_BOUNDARY_TOO_WIDE",
+      "category": "M",
+      "description": "Wide `friend` list grants each friend access to every `public(friend)` function.",
+      "markers": ["many friend addr::mod declarations", "large public(friend) surface"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-N01",
+      "name": "DISPATCHABLE_REENTRY",
+      "category": "N",
+      "description": "`dispatchable_fungible_asset::withdraw/deposit/transfer` called mid-state-update; hook in another module re-enters.",
+      "markers": ["state mutation both before AND after dispatchable_fungible_asset::*", "no #[module_lock]"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-N02",
+      "name": "CLOSURE_CALLBACK_REENTRY",
+      "category": "N",
+      "description": "Function accepts caller-supplied closure (Move 2.0) and invokes it between state mutations; closure re-enters.",
+      "markers": ["parameter of function type (cb: |u64| -> u64)", "move |x| capture", "FunctionValue param"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "APT-N03",
+      "name": "EVENT_HOOK_BACK_CALL",
+      "category": "N",
+      "description": "Event triggers off-chain relay that calls back in same block, or framework dispatch forwards before protocol state settles.",
+      "markers": ["event::emit immediately before cross-module call", "no post-emit finalization"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "APT-N04",
+      "name": "TRANSITIVE_CALL_CYCLE",
+      "category": "N",
+      "description": "A -> B -> C -> A cycle where C re-enters A through a `public` fn while A's borrow is still active -- abort (DoS) or stale-read exploit.",
+      "markers": ["module graph has a cycle with mid-stream borrow", "at least one leg is cross-module public fun"],
+      "typical_direction": "favors_user"
+    }
+  ]
+}

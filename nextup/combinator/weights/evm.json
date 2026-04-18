@@ -1,0 +1,32 @@
+{
+  "category_diversity": 2.0,
+  "has_economic_piece": 3.0,
+  "has_rounding_piece": 1.5,
+  "has_oracle_piece": 2.0,
+  "mixed_direction": 2.5,
+  "same_state_touched": 2.0,
+  "all_checked_arithmetic_penalty": 1.0,
+  "extras": {
+    "w_bridge": 1.5,
+    "w_favors_user_direction": 1.3,
+    "w_favors_protocol_direction": 0.9,
+    "w_neutral_direction": 1.0,
+    "w_actor_any_user": 1.4,
+    "w_actor_flash_borrower": 1.35,
+    "w_actor_keeper": 1.1,
+    "w_actor_owner": 0.7,
+    "w_actor_governance": 0.8,
+    "w_actor_initializer": 1.2,
+    "w_category_J": 1.4,
+    "w_category_K": 1.25,
+    "w_category_L": 1.5,
+    "w_chain_length_bonus_per_piece": 1.5,
+    "w_dup_piece_penalty": -3.0,
+    "w_has_oracle_piece": 1.15,
+    "w_has_external_call_piece": 1.1,
+    "bonus_reentrancy_plus_read_write_gap": 3.0,
+    "bonus_delegatecall_plus_selector_clash": 2.5,
+    "bonus_flash_callback_plus_reserve_price": 3.0,
+    "bonus_oracle_with_external_call": 1.5
+  }
+}

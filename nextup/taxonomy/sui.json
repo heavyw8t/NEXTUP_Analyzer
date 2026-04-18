@@ -1,0 +1,570 @@
+{
+  "version": "1.1.0",
+  "language": "sui",
+  "id_prefix": "SUI",
+  "categories": {
+    "A": "Arithmetic & Precision",
+    "B": "Access Control & Authorization",
+    "C": "State & Storage",
+    "D": "External Dependencies & Oracles",
+    "E": "Economic & DeFi Logic",
+    "F": "Control Flow & Ordering",
+    "G": "Token & Asset Handling",
+    "H": "Ordering & Timing",
+    "I": "Validation & Invariants",
+    "J": "Object Model",
+    "K": "PTB Composition",
+    "L": "Package Versioning",
+    "M": "Dynamic Object Fields",
+    "N": "Capabilities & Witnesses"
+  },
+  "types": [
+    {
+      "id": "SUI-A01",
+      "name": "ROUNDING_FLOOR",
+      "category": "A",
+      "description": "Value computation rounded down via Move integer division or sui::math::mul_div",
+      "markers": ["/ (integer division)", "sui::math::mul_div", "std::u64::divide_and_round_down"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-A02",
+      "name": "ROUNDING_CEIL",
+      "category": "A",
+      "description": "Value computation rounded up via sui::math::mul_div_ceil or manual ceil division",
+      "markers": ["sui::math::mul_div_ceil", "(a + b - 1) / b"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-A03",
+      "name": "MIXED_ROUNDING_DIRECTION",
+      "category": "A",
+      "description": "Floor and ceil used in the same computation flow where rounding should be consistent",
+      "markers": ["both mul_div and mul_div_ceil in same flow"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-A04",
+      "name": "PRECISION_TRUNCATION",
+      "category": "A",
+      "description": "Conversion between integer widths or Balance<T> -> u64 that loses information",
+      "markers": ["(x as u64)", "(x as u8)", "balance::value"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-A05",
+      "name": "MULT_BEFORE_DIV",
+      "category": "A",
+      "description": "Multiplication before division ordering that could overflow or lose precision without mul_div helper",
+      "markers": ["a * b / c", "no mul_div helper"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-A06",
+      "name": "CHECKED_ARITHMETIC_GAP",
+      "category": "A",
+      "description": "Arithmetic path that sidesteps Move's abort-on-overflow semantics via widening/narrowing mix or explicit wrapping diff",
+      "markers": ["std::u64::diff", "u128 widening then u64 narrowing"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-A07",
+      "name": "ZERO_AMOUNT_PASSTHROUGH",
+      "category": "A",
+      "description": "Zero-amount inputs bypass assertions and produce degenerate state transitions on Coin/Balance operations",
+      "markers": ["missing assert!(amount > 0)", "balance::split", "coin::split", "coin::mint"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-B01",
+      "name": "OWNER_ONLY",
+      "category": "B",
+      "description": "Cap-based owner gating: function requires a specific capability object or a sender equality check",
+      "markers": ["&AdminCap", "&mut AdminCap", "tx_context::sender(ctx) == ..."],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-B03",
+      "name": "NO_ACCESS_CONTROL",
+      "category": "B",
+      "description": "public or entry function accepts &mut SharedObject without a capability or sender check",
+      "markers": ["public fun with &mut SharedObject", "entry fun with &mut SharedObject", "no cap parameter", "no sender check"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-B04",
+      "name": "GENESIS_BYPASS",
+      "category": "B",
+      "description": "Logic paths tied to the one-time-witness module initializer",
+      "markers": ["fun init(otw: OTW, ctx: &mut TxContext)", "one-time witness"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-B05",
+      "name": "PAUSE_GATE",
+      "category": "B",
+      "description": "Pause flag enforced on a shared config object; absence or bypass exposes paused paths",
+      "markers": ["assert!(!is_paused(&config))", "config.paused == false"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-C01",
+      "name": "LOOP_STORAGE_MUTATION",
+      "category": "C",
+      "description": "Storage mutation (dynamic_field / table / bag add or field write on &mut SharedObj) inside a loop",
+      "markers": ["dynamic_field::add", "dynamic_object_field::add", "table::add", "object_table::add", "bag::add"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-C02",
+      "name": "UNBOUNDED_ITERATION",
+      "category": "C",
+      "description": "Loop bound is user- or attacker-influenced over vectors, tables, or bags",
+      "markers": ["vector::length(v)", "table::length", "bag::length", "while (i < n)"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-C03",
+      "name": "READ_WRITE_GAP",
+      "category": "C",
+      "description": "Read-modify-write gap across PTB command boundaries or cross-module calls",
+      "markers": ["cross-PTB read then write", "cross-module RMW"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-C04",
+      "name": "DELETE_IN_LOOP",
+      "category": "C",
+      "description": "Deletion inside a loop over vectors, tables, or dynamic fields",
+      "markers": ["vector::remove", "table::remove", "dynamic_field::remove inside while/for"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-C05",
+      "name": "COUNTER_INCREMENT",
+      "category": "C",
+      "description": "Monotonic counter mutation on a shared object",
+      "markers": ["counter.value = counter.value + 1"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-C06",
+      "name": "COLLECT_THEN_ITERATE",
+      "category": "C",
+      "description": "Collect-then-iterate pattern across object state",
+      "markers": ["collect into vector then iterate"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-D01",
+      "name": "ORACLE_PRICE_DEP",
+      "category": "D",
+      "description": "Dependence on an oracle price read from a shared oracle object",
+      "markers": ["pyth::price_info::get_price", "switchboard::aggregator::latest_value", "supra_oracle_holder::get_price"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-D02",
+      "name": "ORACLE_STALENESS",
+      "category": "D",
+      "description": "Oracle timestamp comparison against &Clock shared object (0x6)",
+      "markers": ["clock::timestamp_ms(clock)", "&Clock"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-D03",
+      "name": "CROSS_CONTRACT_CALL",
+      "category": "D",
+      "description": "Call into another published package's public function; risk from version pinning and PTB routing",
+      "markers": ["module_x::function_y in another package", "cross-package public call"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-D04",
+      "name": "QUERY_DEPENDENCY",
+      "category": "D",
+      "description": "Read from shared objects owned by a different package version",
+      "markers": ["reads from shared object of different package version"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-D05",
+      "name": "ORACLE_ERROR_SWALLOWED",
+      "category": "D",
+      "description": "Oracle error or missing price handled by fallback to stale value",
+      "markers": ["option::is_none(&maybe_price) => return", "fallback to stale price"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-E01",
+      "name": "FIRST_DEPOSITOR_PATH",
+      "category": "E",
+      "description": "First-depositor branch on empty-reserve AMM/pool state",
+      "markers": ["balance::value(&pool.reserve_x) == 0"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-E02",
+      "name": "PROPORTIONAL_SHARE",
+      "category": "E",
+      "description": "Proportional share computation on LP/share Coin<T>",
+      "markers": ["amount * total_supply / total_assets"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-E03",
+      "name": "FEE_COMPUTATION",
+      "category": "E",
+      "description": "Fee computation on swap or flow",
+      "markers": ["fee_bps * amount / 10000"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-E04",
+      "name": "SLIPPAGE_PROTECTION",
+      "category": "E",
+      "description": "Minimum-out assertion protecting against price movement",
+      "markers": ["assert!(amount_out >= min_out, ESlippage)"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-E05",
+      "name": "PRICE_FROM_RESERVES",
+      "category": "E",
+      "description": "Spot price derived from pool reserves; manipulable within a single PTB",
+      "markers": ["reserve_x / reserve_y", "balance::value based price"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-E06",
+      "name": "PASSIVE_ORDER_GEN",
+      "category": "E",
+      "description": "Passive resting order generation (DeepBook-style)",
+      "markers": ["resting order", "post-only"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-E07",
+      "name": "CLEARING_PRICE_SELECTION",
+      "category": "E",
+      "description": "Clearing price selection in auction modules",
+      "markers": ["auction clearing price"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-E08",
+      "name": "MINIMUM_SIZE_CHECK",
+      "category": "E",
+      "description": "Minimum trade or deposit size check",
+      "markers": ["assert!(amount >= MIN_SIZE)"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-F01",
+      "name": "CRON_BATCH",
+      "category": "F",
+      "description": "Off-chain keeper entry function iterating a shared queue",
+      "markers": ["entry fun with &mut Queue", "bot-named keeper function"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-F02",
+      "name": "CANCEL_BEFORE_CREATE",
+      "category": "F",
+      "description": "Same-transaction remove-then-add in a dynamic-field-backed queue",
+      "markers": ["remove then add in same tx on dynamic-field queue"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-F03",
+      "name": "MULTI_HOP_CHAIN",
+      "category": "F",
+      "description": "Sequential Coin<T> outputs feeding the next swap_exact_in, in one function or across PTB commands",
+      "markers": ["sequential swap_exact_in with Coin<T> chain"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-F05",
+      "name": "EARLY_RETURN_BRANCH",
+      "category": "F",
+      "description": "Guard clause returns before state updates",
+      "markers": ["if (...) return", "guard before state write"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-G01",
+      "name": "FUND_VERIFICATION",
+      "category": "G",
+      "description": "Fund sufficiency check on incoming Coin<T> / Balance<T>",
+      "markers": ["assert!(coin::value(&payment) >= price)", "balance::value(&b) >= amount"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-G02",
+      "name": "REFUND_CALCULATION",
+      "category": "G",
+      "description": "Refund path using coin::split / balance::split",
+      "markers": ["coin::split(&mut payment, refund_amount, ctx)", "balance::split"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-G03",
+      "name": "MINT_AND_BURN",
+      "category": "G",
+      "description": "Mint/burn authority exercised via TreasuryCap<T> or Supply<T>",
+      "markers": ["coin::mint(&mut TreasuryCap<T>, ...)", "coin::burn(&mut TreasuryCap<T>, ...)", "balance::create_supply", "balance::increase_supply"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-G04",
+      "name": "DUST_ACCUMULATION",
+      "category": "G",
+      "description": "Residual dust left in pool or vault after operation",
+      "markers": ["residual balance after split", "dust left in pool"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-H01",
+      "name": "BLOCK_HEIGHT_DISCRIMINATION",
+      "category": "H",
+      "description": "Decision gated on epoch, epoch timestamp, or clock timestamp",
+      "markers": ["tx_context::epoch(ctx)", "tx_context::epoch_timestamp_ms(ctx)", "clock::timestamp_ms(clock)"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-H02",
+      "name": "MAKER_TAKER_SPLIT",
+      "category": "H",
+      "description": "Maker/taker fee or role split (DeepBook-style)",
+      "markers": ["maker_fee vs taker_fee"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-H03",
+      "name": "ORDER_ID_MANIPULATION",
+      "category": "H",
+      "description": "Order id derived from bit-packed fields on DeepBook-style orders",
+      "markers": ["id << bits | data", "bit-packed order id"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-I01",
+      "name": "INVARIANT_PRESERVATION",
+      "category": "I",
+      "description": "Explicit invariant assertion on pool / share / reserve identity",
+      "markers": ["assert!(x * y >= k)", "assert!(total_shares * reserve_a == constant)"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-I02",
+      "name": "BALANCE_ACCOUNTING",
+      "category": "I",
+      "description": "Balance / supply accounting reconciliation across a flow",
+      "markers": ["balance::value before/after", "supply reconciliation", "Coin<T> conservation"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-J01",
+      "name": "SHARED_OBJECT_UNGUARDED_WRITE",
+      "category": "J",
+      "description": "public or entry function accepts &mut SharedObject without a capability or sender check; any transaction can mutate it",
+      "markers": ["transfer::public_share_object", "transfer::share_object", "&mut shared T without cap", "no sender check"],
+      "typical_direction": "favors_user",
+      "bridge": true
+    },
+    {
+      "id": "SUI-J02",
+      "name": "OWNED_OBJECT_UID_REUSE",
+      "category": "J",
+      "description": "UID allocated then stored on an unreachable path, or a stale ID reused in an equality check after destructuring",
+      "markers": ["object::new(ctx) with no transfer/delete/store", "id::copy", "manual id comparison after destructure"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-J03",
+      "name": "VERSION_BUMP_MISSING",
+      "category": "J",
+      "description": "Mutation to a shared object with a version/schema_version field does not bump the field, defeating cross-version gating",
+      "markers": ["struct field version: u64", "struct field schema_version", "mutating function without version increment"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-J04",
+      "name": "IMMUTABLE_OBJECT_WRONGLY_MUTATED",
+      "category": "J",
+      "description": "Logical mutation attempted on state frozen via transfer::public_freeze_object, or freeze occurs before config finalization",
+      "markers": ["transfer::public_freeze_object", "transfer::freeze_object", "freeze before finalization"],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SUI-J05",
+      "name": "OBJECT_DELETE_WITHOUT_UID_DELETE",
+      "category": "J",
+      "description": "Struct destructured without object::delete(id), or destructor drops object while dynamic fields still exist on its UID",
+      "markers": ["let T { id, ... } = obj; without object::delete(id)", "dynamic field add without matching remove before destruction"],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SUI-J06",
+      "name": "WRAPPING_A_SHARED_OBJECT",
+      "category": "J",
+      "description": "Shared object moved into a wrapper struct's field; once wrapped, no longer addressable and its dynamic fields become orphaned",
+      "markers": ["assignment of shared-at-init object into struct field", "no unwrap path"],
+      "typical_direction": "favors_protocol",
+      "bridge": true
+    },
+    {
+      "id": "SUI-K01",
+      "name": "PTB_OBJECT_HANDOFF_MISMATCH",
+      "category": "K",
+      "description": "Function returns Coin<T>, Object, or hot-potato assumed to be forwarded to a specific follow-up; PTB allows routing to any matching function",
+      "markers": ["public fun returning Coin<T>", "public fun returning key struct", "hot-potato zero-ability struct", "implicit downstream expectation"],
+      "typical_direction": "favors_user",
+      "bridge": true
+    },
+    {
+      "id": "SUI-K02",
+      "name": "PTB_TYPE_ARGUMENT_MISMATCH",
+      "category": "K",
+      "description": "PTB routes a generic value across steps with mismatched TypeArgument<T>; module fails to assert phantom-type equality",
+      "markers": ["generic function with Coin<T> no phantom pairing assertion", "missing type_name::get<T>() == type_name::get<U>()"],
+      "typical_direction": "favors_user",
+      "bridge": true
+    },
+    {
+      "id": "SUI-K03",
+      "name": "PARTIAL_PTB_ROLLBACK_ASSUMPTION",
+      "category": "K",
+      "description": "Code assumes later PTB command can fail while earlier commands persist; PTBs are all-or-nothing",
+      "markers": ["comments asserting partial commit", "option::is_none handling for 'partial' PTB outcomes"],
+      "typical_direction": "favors_user",
+      "bridge": true
+    },
+    {
+      "id": "SUI-K04",
+      "name": "SPLIT_TRANSFER_REENTRY",
+      "category": "K",
+      "description": "Within one PTB, attacker intersperses SplitCoins and TransferObjects between protocol commands to intercept or recycle returned Coin<T>, yielding a flash-loan-like pattern",
+      "markers": ["protocol fun returning Coin<T>", "protocol fun reading pool state", "absence of same-tx reward-claim gating"],
+      "typical_direction": "favors_user",
+      "bridge": true
+    },
+    {
+      "id": "SUI-L01",
+      "name": "UPGRADE_POLICY_TOO_PERMISSIVE",
+      "category": "L",
+      "description": "UpgradeCap retains compatible policy when additive or dep_only would suffice, widening attack surface for future upgrades",
+      "markers": ["sui::package::UpgradeCap", "no only_additive_upgrades", "no only_dep_upgrades", "no make_immutable"],
+      "typical_direction": "favors_protocol",
+      "bridge": true
+    },
+    {
+      "id": "SUI-L02",
+      "name": "ENTRY_FN_SIGNATURE_CHANGE",
+      "category": "L",
+      "description": "New package version silently changes behavior of an entry function whose signature is preserved",
+      "markers": ["v1/v2 entry fun pairs with different internal logic", "no version-gated dispatch"],
+      "typical_direction": "neutral",
+      "bridge": true
+    },
+    {
+      "id": "SUI-L03",
+      "name": "FRIEND_VISIBILITY_LOST_ON_UPGRADE",
+      "category": "L",
+      "description": "public(friend) or public(package) visibility re-declared across upgrade exposes previously friend-only state",
+      "markers": ["visibility qualifier change across versions", "new v2 modules calling v1 friend functions"],
+      "typical_direction": "favors_user",
+      "bridge": true
+    },
+    {
+      "id": "SUI-L04",
+      "name": "UPGRADECAP_EXPOSURE",
+      "category": "L",
+      "description": "UpgradeCap held by an EOA, shared object, or weakly-gated wrapper; compromise replaces all package logic",
+      "markers": ["transfer::public_transfer(upgrade_cap, deployer)", "UpgradeCap inside shared object", "no multisig / timelock / DAO"],
+      "typical_direction": "favors_protocol",
+      "bridge": true
+    },
+    {
+      "id": "SUI-M01",
+      "name": "DOF_UNBOUNDED_GROWTH",
+      "category": "M",
+      "description": "dynamic_field / dynamic_object_field / table / bag add in a loop or user-facing entry function with no cap",
+      "markers": ["dynamic_field::add in loop", "dynamic_object_field::add in loop", "table::add in user entry", "bag::add in loop", "object_bag::add in loop"],
+      "typical_direction": "favors_user",
+      "bridge": true
+    },
+    {
+      "id": "SUI-M02",
+      "name": "DOF_KEY_COLLISION",
+      "category": "M",
+      "description": "Two distinct code paths add fields under the same (TypeTag, name) key; second write silently overwrites or aborts",
+      "markers": ["overlapping key types across modules", "shared integer name-space for different logical children"],
+      "typical_direction": "neutral",
+      "bridge": true
+    },
+    {
+      "id": "SUI-M03",
+      "name": "DOF_REMOVED_WITHOUT_DELETE_CASCADE",
+      "category": "M",
+      "description": "Parent destructor calls object::delete(id) without first removing all dynamic fields; fields orphaned, Balance/Coin stranded",
+      "markers": ["destructor that destructures and deletes UID", "dynamic_field::add on UID not matched by remove before destruction"],
+      "typical_direction": "neutral",
+      "bridge": true
+    },
+    {
+      "id": "SUI-N01",
+      "name": "ONE_TIME_WITNESS_REUSE",
+      "category": "N",
+      "description": "OTW-typed parameter accepted outside init, or missing sui::types::is_one_time_witness assertion",
+      "markers": ["function accepting OTW type outside init signature", "missing assert!(sui::types::is_one_time_witness(&otw))"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-N02",
+      "name": "DISPLAY_CAP_EXPOSURE",
+      "category": "N",
+      "description": "Display<T> or Publisher object shared or transferred to untrusted holder",
+      "markers": ["transfer::public_share_object(publisher)", "Display<T> transferred to non-admin", "Publisher held by shared object"],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SUI-N03",
+      "name": "TREASURY_CAP_LEAK_VIA_PUBLIC_TRANSFER",
+      "category": "N",
+      "description": "TreasuryCap<T> transferred via public_transfer to attacker-influenced recipient or stored in weakly-gated shared object",
+      "markers": ["transfer::public_transfer(treasury_cap, recipient)", "TreasuryCap<T> inside shared object with no cap-of-cap gating"],
+      "typical_direction": "favors_user"
+    }
+  ],
+  "scoring": {
+    "default_weight": 1.0,
+    "priority_categories": ["J", "K", "L"],
+    "priority_multiplier": 2.0,
+    "medium_categories": ["M", "N"],
+    "medium_multiplier": 1.5,
+    "per_type_overrides": {
+      "SUI-B03": 1.3,
+      "SUI-D03": 1.3,
+      "SUI-E05": 1.3,
+      "SUI-C03": 0.7
+    },
+    "combo_requires_priority": true,
+    "combo_no_priority_penalty": 0.5
+  },
+  "conflicting_actor_pairs": [
+    ["sender", "package_upgrader"],
+    ["sender", "cap_holder"],
+    ["shared_object_updater", "consensus"],
+    ["module_publisher", "sender"],
+    ["package_upgrader", "consensus"]
+  ],
+  "actors": [
+    "sender",
+    "shared_object_updater",
+    "package_upgrader",
+    "cap_holder",
+    "consensus",
+    "module_publisher"
+  ]
+}

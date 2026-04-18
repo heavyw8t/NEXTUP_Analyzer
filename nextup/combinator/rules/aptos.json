@@ -1,0 +1,28 @@
+{
+  "min_categories": 2,
+  "require_shared_contract_or_call": true,
+  "require_interaction_link": true,
+  "eliminate_actor_conflict": true,
+  "eliminate_redundant_same_direction_rounding": true,
+  "eliminate_same_function_duplicate": true,
+  "eliminate_read_only_combos": true,
+  "eliminate_pure_defensive": true,
+  "eliminate_no_state_overlap": true,
+  "eliminate_all_neutral_same_context": true,
+  "custom_rules": [
+    "eliminate_same_module_disjoint_resources",
+    "eliminate_all_view_no_entry",
+    "eliminate_type_param_incompatible",
+    "eliminate_upgrade_policy_immutable",
+    "eliminate_ability_forbids_chain",
+    "eliminate_ref_not_generated",
+    "bonus_drop_missing_plus_loss_path",
+    "bonus_bridge_plus_ability_or_reentrancy",
+    "bonus_category_j_abilities",
+    "bonus_category_k_resources",
+    "bonus_category_l_fungible_asset",
+    "bonus_category_n_reentrancy",
+    "bonus_category_m_entry_access",
+    "bonus_oracle_pyth_switchboard"
+  ]
+}

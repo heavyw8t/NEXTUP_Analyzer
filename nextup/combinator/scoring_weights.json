@@ -1,9 +1,0 @@
-{
-  "category_diversity": 2.0,
-  "has_economic_piece": 3.0,
-  "has_rounding_piece": 1.5,
-  "has_oracle_piece": 2.0,
-  "mixed_direction": 2.5,
-  "same_state_touched": 2.0,
-  "all_checked_arithmetic_penalty": 1.0
-}

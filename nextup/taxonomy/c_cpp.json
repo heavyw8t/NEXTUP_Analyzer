@@ -1,0 +1,758 @@
+{
+  "version": "1.1.0",
+  "language": "c_cpp",
+  "id_prefix": "CPP",
+  "categories": {
+    "A": "Arithmetic & Precision",
+    "C": "State & Storage",
+    "D": "External Dependencies & Oracles",
+    "I": "Validation & Invariants",
+    "J": "Memory Safety",
+    "K": "Aliasing & Lifetime",
+    "L": "Concurrency",
+    "M": "Input Validation",
+    "N": "Undefined Behavior",
+    "O": "Resource Management"
+  },
+  "types": [
+    {
+      "id": "CPP-A04",
+      "name": "PRECISION_TRUNCATION",
+      "category": "A",
+      "description": "Narrowing integer or pointer-width cast that loses bits (size_t to int, uint64_t to uint32_t, long to int). Common in parsers and length arithmetic.",
+      "markers": [
+        "(uint32_t)uint64_val",
+        "static_cast<int>",
+        "(int)size_t_val",
+        "(uint16_t)",
+        "narrowing conversion warning",
+        "-Wconversion",
+        "-Wnarrowing",
+        "CWE-197",
+        "CWE-681"
+      ],
+      "typical_direction": "latent"
+    },
+    {
+      "id": "CPP-A05",
+      "name": "MULT_BEFORE_DIV",
+      "category": "A",
+      "description": "Expression of the form a * b / c where the intermediate product can overflow a fixed-width integer type before the division runs.",
+      "markers": [
+        "a * b / c",
+        "count * sizeof(T)",
+        "UBSan signed-integer-overflow on intermediate",
+        "CWE-190",
+        "__builtin_mul_overflow absent"
+      ],
+      "typical_direction": "latent"
+    },
+    {
+      "id": "CPP-A06",
+      "name": "CHECKED_ARITHMETIC_GAP",
+      "category": "A",
+      "description": "Mix of __builtin_*_overflow or SafeInt<> wrappers with raw +/-/* on one code path. A single unchecked operation anchors integer-based memory-corruption chains.",
+      "markers": [
+        "__builtin_add_overflow",
+        "__builtin_sub_overflow",
+        "__builtin_mul_overflow",
+        "SafeInt<",
+        "raw + / - / * on size_t / int",
+        "partial overflow coverage",
+        "CWE-190",
+        "CWE-191"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-A07",
+      "name": "ZERO_AMOUNT_PASSTHROUGH",
+      "category": "A",
+      "description": "Zero-length passthrough: malloc(0) treated as valid, memcpy with n=0 and invalid src/dst pointer (UB on some platforms), zero-length read into unvalidated buffer.",
+      "markers": [
+        "malloc(0)",
+        "calloc(0, n)",
+        "memcpy(dst, src, 0)",
+        "memmove(dst, src, 0)",
+        "read(fd, buf, 0)",
+        "CWE-687",
+        "zero-size allocation"
+      ],
+      "typical_direction": "latent"
+    },
+    {
+      "id": "CPP-C01",
+      "name": "LOOP_CONTAINER_MUTATION",
+      "category": "C",
+      "description": "Iteration over an STL container (or linked list) while the same body mutates it. Iterator invalidation or skipped/duplicated elements follow.",
+      "markers": [
+        "for (auto it = v.begin(); it != v.end(); ++it) { v.push_back",
+        "for (auto& x : container) { container.erase",
+        "vector::push_back inside range-for",
+        "map::erase in iteration",
+        "iterator invalidation",
+        "CWE-664"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-C02",
+      "name": "UNBOUNDED_ITERATION",
+      "category": "C",
+      "description": "Loop bound derived from attacker-shaped data with no cap: while(!queue.empty()), linked-list traversal, recursive descent on untrusted input.",
+      "markers": [
+        "while (!queue.empty())",
+        "while (node) node = node->next",
+        "recursive descent parser",
+        "for (i = 0; i < hdr->count; ++i)",
+        "no MAX_ITER guard",
+        "CWE-834",
+        "CWE-835"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-C05",
+      "name": "COUNTER_INCREMENT",
+      "category": "C",
+      "description": "Monotonic counter (next_id, seq, atomic_fetch_add). Off-by-one, unsigned wrap, and non-atomic increment on a shared counter are all hazards.",
+      "markers": [
+        "next_id++",
+        "seq++",
+        "atomic_fetch_add",
+        "++counter on shared global",
+        "CWE-191",
+        "CWE-362"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "CPP-D03",
+      "name": "CROSS_MODULE_CALL",
+      "category": "D",
+      "description": "Dynamic cross-module entry: dlopen/dlsym lookup, function-pointer call resolved at runtime, plugin entry point, IPC call. Anchors reentrancy and callback-side-effect chains.",
+      "markers": [
+        "dlopen",
+        "dlsym",
+        "GetProcAddress",
+        "function pointer call",
+        "plugin->entry(",
+        "IPC send/recv",
+        "CWE-829"
+      ],
+      "typical_direction": "latent"
+    },
+    {
+      "id": "CPP-I01",
+      "name": "INVARIANT_PRESERVATION",
+      "category": "I",
+      "description": "Declared invariant (assert, static_assert, BOOST_ASSERT) over multiple state variables. The composed state may drift from the asserted relation on some path.",
+      "markers": [
+        "assert(",
+        "static_assert(",
+        "BOOST_ASSERT",
+        "BOOST_ASSERT_MSG",
+        "invariant check",
+        "used + free == total",
+        "CWE-617"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "CPP-J01",
+      "name": "USE_AFTER_FREE",
+      "category": "J",
+      "description": "Read or write of memory after its lifetime ended (free(p); ... *p; or delete obj; obj->m();).",
+      "markers": [
+        "free",
+        "delete",
+        "delete[]",
+        "CWE-416",
+        "ASan heap-use-after-free",
+        "-fsanitize=address",
+        "free(p) without p = NULL"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-J02",
+      "name": "DOUBLE_FREE",
+      "category": "J",
+      "description": "Two calls to free/delete on the same pointer, often across an error path and a cleanup path.",
+      "markers": [
+        "free",
+        "delete",
+        "CWE-415",
+        "ASan double-free",
+        "goto err1; ... goto err2; both free(buf)",
+        "two-label cleanup"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-J03",
+      "name": "HEAP_BUFFER_OVERFLOW",
+      "category": "J",
+      "description": "Write or read past the end of a heap allocation. Composed with A06 (unchecked arithmetic) or M02/M05 (unchecked length from external input).",
+      "markers": [
+        "memcpy",
+        "memmove",
+        "strcpy",
+        "strncpy",
+        "sprintf",
+        "read",
+        "recv",
+        "CWE-122",
+        "ASan heap-buffer-overflow",
+        "-fsanitize=address",
+        "-D_FORTIFY_SOURCE=2"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-J04",
+      "name": "STACK_BUFFER_OVERFLOW",
+      "category": "J",
+      "description": "Write past the end of a stack buffer, including via variable-length arrays and alloca.",
+      "markers": [
+        "gets",
+        "scanf(\"%s\"",
+        "char buf[N]; strcpy",
+        "alloca",
+        "VLA with attacker-controlled size",
+        "CWE-121",
+        "ASan stack-buffer-overflow",
+        "-fstack-protector-strong"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-J05",
+      "name": "MISSING_NUL_TERMINATOR",
+      "category": "J",
+      "description": "String treated as NUL-terminated when it is not: strncpy without explicit terminator, read() buffer handed to strlen.",
+      "markers": [
+        "strncpy",
+        "read",
+        "recv",
+        "no trailing dst[sizeof(dst)-1] = '\\0'",
+        "CWE-170",
+        "ASan heap-buffer-overflow on downstream strlen"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-J06",
+      "name": "ZERO_SIZE_ALLOC",
+      "category": "J",
+      "description": "malloc(0) / calloc(0, n) / new T[0] whose return value is then treated as a valid, non-null, writable allocation. Implementation-defined behavior.",
+      "markers": [
+        "malloc",
+        "calloc",
+        "realloc",
+        "new T[",
+        "count * sizeof(T) where count may be 0",
+        "CWE-687"
+      ],
+      "typical_direction": "latent"
+    },
+    {
+      "id": "CPP-J07",
+      "name": "OOB_READ",
+      "category": "J",
+      "description": "Read past the end of an allocation or array. Distinct from J03 because reads are often information leaks rather than corruption.",
+      "markers": [
+        "memcpy as source",
+        "array[i] with unchecked i",
+        "CWE-125",
+        "ASan heap-buffer-overflow (read)",
+        "UBSan pointer-overflow"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-J08",
+      "name": "NULL_DEREF_AFTER_CHECK",
+      "category": "J",
+      "description": "Pointer checked against NULL then dereferenced on a path where the check does not in fact guarantee non-NULL (different branch, different lock scope, intervening reset).",
+      "markers": [
+        "if (p) { ... } use(p);",
+        "p = get(); if (!p) return; ... p->f();",
+        "CWE-476",
+        "UBSan null-dereference",
+        "-fsanitize=undefined"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-K01",
+      "name": "DANGLING_POINTER",
+      "category": "K",
+      "description": "Pointer or reference whose pointee has been destroyed (stack frame returned, container resized, RAII object went out of scope).",
+      "markers": [
+        "return &local",
+        "return &v[0] then v.resize",
+        "raw pointer to unique_ptr-owned object",
+        "CWE-825",
+        "ASan stack-use-after-return",
+        "ASan heap-use-after-free"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-K02",
+      "name": "ITERATOR_INVALIDATION",
+      "category": "K",
+      "description": "Iterator or reference into an STL container used after a mutation that the standard marks as invalidating (push_back, insert, erase, reserve, resize).",
+      "markers": [
+        "auto it = v.begin()",
+        "v.push_back",
+        "v.insert",
+        "v.erase",
+        "v.reserve",
+        "v.resize",
+        "CWE-416",
+        "ASan heap-use-after-free on iterator"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-K03",
+      "name": "RETURN_ADDRESS_OF_LOCAL",
+      "category": "K",
+      "description": "Function returns a pointer or reference to a local (stack) object. Caller reads freed stack.",
+      "markers": [
+        "return &local_var",
+        "return local_array",
+        "return std::string_view(local)",
+        "CWE-562",
+        "-Wreturn-local-addr",
+        "-Wdangling-pointer",
+        "ASan stack-use-after-return"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-K04",
+      "name": "SHARED_PTR_CYCLE",
+      "category": "K",
+      "description": "std::shared_ptr reference cycle keeps objects live forever; pure memory leak with no sanitizer signal other than LSan.",
+      "markers": [
+        "std::shared_ptr<",
+        "shared_ptr<Other> member on each side",
+        "no weak_ptr break",
+        "CWE-401",
+        "LSan -fsanitize=leak"
+      ],
+      "typical_direction": "latent"
+    },
+    {
+      "id": "CPP-K05",
+      "name": "MOVE_FROM_THEN_READ",
+      "category": "K",
+      "description": "C++ object is moved-from, then read. Moved-from objects are in a valid but unspecified state; reading non-reset fields is a logic bug and occasionally UB.",
+      "markers": [
+        "std::move",
+        "moved-from object reused",
+        "vec2 = std::move(vec1); vec1.size()",
+        "CWE-672",
+        "-Wmove"
+      ],
+      "typical_direction": "latent"
+    },
+    {
+      "id": "CPP-K06",
+      "name": "REFERENCE_TO_TEMPORARY",
+      "category": "K",
+      "description": "const T& x = f().member where f() returns a temporary that is destroyed at end of the full expression, leaving x dangling.",
+      "markers": [
+        "const T& x = f().member",
+        "auto& x = f()",
+        "std::string_view from temporary",
+        "CWE-562",
+        "-Wdangling-gsl",
+        "-Wreturn-stack-address"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-K07",
+      "name": "STRICT_ALIASING_VIOLATION",
+      "category": "K",
+      "description": "Access to an object through a pointer of an incompatible type. UB under -fstrict-aliasing; the compiler may hoist or reorder loads.",
+      "markers": [
+        "*(float*)&int_val",
+        "reinterpret_cast",
+        "type punning via pointer cast",
+        "-fstrict-aliasing",
+        "-Wstrict-aliasing",
+        "std::bit_cast safe alternative",
+        "CWE-704"
+      ],
+      "typical_direction": "latent"
+    },
+    {
+      "id": "CPP-L01",
+      "name": "DATA_RACE",
+      "category": "L",
+      "description": "Concurrent access to the same non-atomic variable from two threads where at least one access is a write, without synchronization. UB under the C and C++ memory models.",
+      "markers": [
+        "raw ++ / -- / = on shared global",
+        "no std::atomic<",
+        "no mutex guard",
+        "CWE-362",
+        "TSan data race",
+        "-fsanitize=thread"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-L02",
+      "name": "TOCTOU",
+      "category": "L",
+      "description": "Check-then-act sequence where a separate thread, process, or filesystem actor can mutate state between the check and the act. Includes filesystem, shared-memory, and signal-handler variants.",
+      "markers": [
+        "stat then open",
+        "access then open",
+        "if (*p == 0) *p = 1 without CAS",
+        "cppcheck toctou",
+        "CWE-367"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-L03",
+      "name": "LOCK_ORDER_INVERSION",
+      "category": "L",
+      "description": "Two code paths acquire two locks in opposite orders, creating a deadlock potential.",
+      "markers": [
+        "lock(m1); lock(m2)",
+        "lock(m2); lock(m1)",
+        "no std::scoped_lock(m1, m2)",
+        "TSan potential deadlock",
+        "CWE-833"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-L04",
+      "name": "MISSING_ATOMIC",
+      "category": "L",
+      "description": "Shared variable read-modify-write implemented with raw x++ or x = x | mask instead of atomic. Often silent, not reliably tripped by TSan.",
+      "markers": [
+        "plain int counter; counter++",
+        "x = x | mask on shared",
+        "no std::atomic<",
+        "no atomic_fetch_add",
+        "CWE-662"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-L05",
+      "name": "SIGNAL_UNSAFE_CALL",
+      "category": "L",
+      "description": "Signal handler calls functions that are not async-signal-safe (malloc, printf, mutex lock, most of libc).",
+      "markers": [
+        "signal handler body",
+        "malloc inside signal",
+        "printf inside signal",
+        "fprintf inside signal",
+        "syslog inside signal",
+        "mutex lock inside signal",
+        "CWE-479",
+        "volatile sig_atomic_t safe alternative"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-L06",
+      "name": "THREAD_CANCEL_IN_CRITICAL",
+      "category": "L",
+      "description": "pthread_cancel or C++ thread termination arrives while a thread holds a mutex or owns a resource with no cleanup handler. Results in stranded locks or leaked resources.",
+      "markers": [
+        "pthread_cancel",
+        "default cancellation type",
+        "no pthread_cleanup_push",
+        "std::thread detach then terminate",
+        "CWE-667"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-M01",
+      "name": "FORMAT_STRING",
+      "category": "M",
+      "description": "Attacker-controlled string passed as the format argument to a variadic format function.",
+      "markers": [
+        "printf(user_input)",
+        "fprintf(fp, user_input)",
+        "sprintf",
+        "snprintf",
+        "syslog",
+        "err",
+        "warn",
+        "-Wformat",
+        "-Wformat-security",
+        "CWE-134"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-M02",
+      "name": "UNVALIDATED_LENGTH",
+      "category": "M",
+      "description": "Length field read from untrusted source (network, file, IPC) and used as the size argument to memcpy, read, a loop bound, or an allocation without being bounded against the actual buffer.",
+      "markers": [
+        "memcpy(dst, src, hdr->len)",
+        "memmove",
+        "recv",
+        "fread",
+        "no hdr->len <= sizeof(dst) check",
+        "CWE-20",
+        "CWE-805"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-M03",
+      "name": "INTEGER_PARSE_NO_RANGE",
+      "category": "M",
+      "description": "String-to-integer conversion whose result is used without checking errno, range, or saturation. atoi has no error signaling at all.",
+      "markers": [
+        "atoi",
+        "atol",
+        "strtol without errno check",
+        "strtoul without errno check",
+        "sscanf %d",
+        "CWE-190",
+        "CWE-20"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-M04",
+      "name": "NUL_TERMINATOR_ASSUMPTION",
+      "category": "M",
+      "description": "External buffer (network read, file read, IPC) is passed to strlen, strcpy, strcmp etc. without first ensuring a NUL byte exists within the known bounds.",
+      "markers": [
+        "strlen on recv buffer",
+        "strcpy from wire",
+        "strcmp on un-NUL-terminated input",
+        "strchr on unvalidated buffer",
+        "CWE-126",
+        "CWE-170"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-M05",
+      "name": "UNTRUSTED_SIZE_IN_MEMCPY",
+      "category": "M",
+      "description": "Size argument to memcpy / memmove / read is computed from external data using arithmetic that can overflow or wrap. Pairs with A06 and A05.",
+      "markers": [
+        "memcpy(dst, src, a * b)",
+        "memmove(dst, src, hdr->count * sizeof(T))",
+        "read(fd, buf, len_from_wire)",
+        "recv",
+        "CWE-190",
+        "CWE-787",
+        "ASan heap-buffer-overflow"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-M06",
+      "name": "PATH_TRAVERSAL",
+      "category": "M",
+      "description": "External path segment passed to open, fopen, stat, unlink etc. without canonicalization or prefix containment.",
+      "markers": [
+        "open(user_path",
+        "fopen(user_path",
+        "unlink(user_path",
+        "rename(user_path",
+        "no realpath",
+        "no openat O_NOFOLLOW",
+        "CWE-22"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-N01",
+      "name": "SIGNED_OVERFLOW",
+      "category": "N",
+      "description": "Signed integer overflow. UB in C and C++. Compilers at -O2 routinely eliminate overflow-check code that assumes signed wrap.",
+      "markers": [
+        "raw + / - / * on int / long",
+        "no __builtin_add_overflow",
+        "signed arithmetic with untrusted input",
+        "CWE-190",
+        "UBSan signed-integer-overflow",
+        "-fsanitize=undefined"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-N02",
+      "name": "SHIFT_EXCESS",
+      "category": "N",
+      "description": "Left or right shift by an amount greater than or equal to the type's bit width, or left shift that overflows a signed type. UB.",
+      "markers": [
+        "x << n",
+        "x >> n",
+        "attacker-supplied shift amount",
+        "no n < sizeof(x) * CHAR_BIT check",
+        "CWE-1335",
+        "UBSan shift-out-of-bounds"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-N03",
+      "name": "UNSEQUENCED_SIDE_EFFECT",
+      "category": "N",
+      "description": "Multiple unsequenced modifications to the same scalar (i = i++ + ++i;) or side-effect in a function-call argument list whose order is unspecified.",
+      "markers": [
+        "i = i++ + ++i",
+        "f(x++, x++)",
+        "-Wsequence-point",
+        "CWE-758"
+      ],
+      "typical_direction": "latent"
+    },
+    {
+      "id": "CPP-N04",
+      "name": "UNINITIALIZED_READ",
+      "category": "N",
+      "description": "Read of an object whose value has not been set. malloc does not zero; POD members of a no-init constructor are undefined; partial struct initializers leave fields undefined.",
+      "markers": [
+        "malloc without memset",
+        "struct T x; use(x.f)",
+        "partial initializer",
+        "no member-init-list",
+        "MSan use-of-uninitialized-value",
+        "-Wuninitialized",
+        "-Wmaybe-uninitialized",
+        "CWE-457",
+        "CWE-908"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-N05",
+      "name": "PTR_ARITH_OOB",
+      "category": "N",
+      "description": "Pointer arithmetic that produces a pointer outside the object it was derived from (other than one-past-the-end). UB.",
+      "markers": [
+        "p + n with attacker-supplied n",
+        "array + offset unchecked",
+        "CWE-823",
+        "UBSan pointer-overflow"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-N06",
+      "name": "MODIFY_CONST",
+      "category": "N",
+      "description": "Cast-away-const followed by write; writing to string literals; modifying objects declared const.",
+      "markers": [
+        "char *s = \"literal\"; s[0] = ",
+        "const_cast<T*>",
+        "(char*)const_str",
+        "CWE-704"
+      ],
+      "typical_direction": "latent"
+    },
+    {
+      "id": "CPP-O01",
+      "name": "RAII_BYPASS",
+      "category": "O",
+      "description": "Resource acquired with a raw allocator (malloc, fopen, open, socket, pthread_mutex_lock) without an RAII wrapper, and at least one code path (early return, exception, goto err) omits the release.",
+      "markers": [
+        "malloc without unique_ptr",
+        "fopen without fclose on error path",
+        "open without close on error path",
+        "pthread_mutex_lock without lock_guard",
+        "goto err path omits release",
+        "CWE-401",
+        "CWE-404",
+        "CWE-772",
+        "LSan"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-O02",
+      "name": "FD_LEAK",
+      "category": "O",
+      "description": "File-descriptor leak on error path. Specialization of O01 with stricter severity because FD exhaustion denies all new sockets or files system-wide.",
+      "markers": [
+        "fd = open(...); if (cond) return -1;",
+        "no close(fd) on error",
+        "socket without close",
+        "CWE-775"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-O03",
+      "name": "DTOR_THROWS",
+      "category": "O",
+      "description": "C++ destructor that can throw. If thrown during stack unwinding from another exception, std::terminate is called.",
+      "markers": [
+        "~T() noexcept(false)",
+        "throw inside destructor",
+        "-Wterminate",
+        "CWE-248"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-O04",
+      "name": "NOEXCEPT_VIOLATION",
+      "category": "O",
+      "description": "Function declared noexcept that calls a function which can throw. Any escaped exception calls std::terminate.",
+      "markers": [
+        "noexcept",
+        "throw inside noexcept function",
+        "calls throwing function from noexcept",
+        "-Wnoexcept",
+        "CWE-755"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-O05",
+      "name": "MUTEX_NOT_UNLOCKED",
+      "category": "O",
+      "description": "Raw pthread_mutex_lock or mtx.lock() with a path (error, exception) that returns without unlocking. Subsequent acquires deadlock.",
+      "markers": [
+        "pthread_mutex_lock without unlock",
+        "mtx.lock() without unlock",
+        "no lock_guard",
+        "no unique_lock",
+        "no pthread_cleanup_push",
+        "CWE-667"
+      ],
+      "typical_direction": "exploitable"
+    },
+    {
+      "id": "CPP-O06",
+      "name": "SECRET_CLEAR_DSE",
+      "category": "O",
+      "description": "memset(secret, 0, n) at end of function that the compiler eliminates as dead-store because secret is not subsequently read. Key material remains on the stack.",
+      "markers": [
+        "memset(secret, 0, n)",
+        "bzero(key, n)",
+        "no explicit_bzero",
+        "no OPENSSL_cleanse",
+        "no sodium_memzero",
+        "no SecureZeroMemory",
+        "CWE-14",
+        "CWE-226"
+      ],
+      "typical_direction": "exploitable"
+    }
+  ]
+}

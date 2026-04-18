@@ -1,0 +1,27 @@
+{
+  "min_categories": 2,
+  "require_shared_contract_or_call": true,
+  "require_interaction_link": true,
+  "eliminate_actor_conflict": false,
+  "eliminate_redundant_same_direction_rounding": true,
+  "eliminate_same_function_duplicate": true,
+  "eliminate_read_only_combos": true,
+  "eliminate_pure_defensive": true,
+  "eliminate_no_state_overlap": true,
+  "eliminate_all_neutral_same_context": true,
+  "custom_rules": [
+    "eliminate_account_overlap_requirement",
+    "eliminate_all_query",
+    "eliminate_signer_requirement_coherence",
+    "eliminate_cu_budget_feasibility",
+    "eliminate_token22_extension_coherence",
+    "eliminate_cpi_depth_limit",
+    "eliminate_remaining_accounts_dependency",
+    "bonus_pda_plus_missing_owner",
+    "bonus_reload_plus_pricing",
+    "bonus_cpi_target_plus_mint_burn",
+    "bonus_remaining_accounts_plus_arbitrary_cpi",
+    "bonus_permanent_delegate_plus_vault",
+    "bonus_sysvar_spoof_plus_flash_guard"
+  ]
+}

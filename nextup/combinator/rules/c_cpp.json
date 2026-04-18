@@ -1,0 +1,20 @@
+{
+  "min_categories": 2,
+  "require_shared_contract_or_call": true,
+  "require_interaction_link": true,
+  "eliminate_actor_conflict": true,
+  "eliminate_redundant_same_direction_rounding": false,
+  "eliminate_same_function_duplicate": true,
+  "eliminate_read_only_combos": false,
+  "eliminate_pure_defensive": true,
+  "eliminate_no_state_overlap": true,
+  "eliminate_all_neutral_same_context": false,
+  "custom_rules": [
+    "eliminate_sanitizer_duplicate",
+    "eliminate_template_only_no_instantiation",
+    "eliminate_pure_compute_no_io",
+    "eliminate_same_tu_static_no_bridge",
+    "split_verify_tsan_asan_incompatible",
+    "eliminate_already_patched_cve_region"
+  ]
+}

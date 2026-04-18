@@ -1,0 +1,28 @@
+{
+  "category_diversity": 2.0,
+  "has_economic_piece": 0.0,
+  "has_rounding_piece": 0.0,
+  "has_oracle_piece": 1.0,
+  "mixed_direction": 2.5,
+  "same_state_touched": 2.0,
+  "all_checked_arithmetic_penalty": 1.0,
+  "extras": {
+    "has_memory_safety_piece": 3.0,
+    "has_concurrency_piece": 3.0,
+    "has_aliasing_piece": 2.0,
+    "has_ub_piece": 2.0,
+    "has_input_validation_piece": 3.0,
+    "has_resource_piece": 1.0,
+    "has_arithmetic_piece": 1.0,
+    "arithmetic_plus_memory_or_input_bonus": 2.0,
+    "input_to_corruption_multiplier": 1.5,
+    "concurrency_multi_actor_multiplier": 1.3,
+    "mixed_actor_threads_bonus": 2.0,
+    "signal_plus_unsafe_call_bonus": 3.0,
+    "raii_plus_exception_bonus": 2.0,
+    "all_pieces_same_function_no_m_penalty": 2.0,
+    "all_in_templates_penalty": 3.0,
+    "dse_no_crypto_context_penalty": 1.0,
+    "stranded_resource_floor_bonus": 1.0
+  }
+}

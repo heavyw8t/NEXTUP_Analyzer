@@ -9,15 +9,15 @@ You are **NOT** finding bugs. You are **tagging patterns** that COULD be half of
 ## Your Inputs
 
 1. **Source files**: All in-scope files at `{SCOPE_PATH}`
-2. **Taxonomy**: Read `{TAXONOMY_PATH}` for the 45 puzzle piece types across 9 categories (A-I)
-3. **Language hints**: Read `{PATTERN_HINTS_PATH}` for language-specific markers
+2. **Taxonomy**: Read `{TAXONOMY_PATH}` for the language-specific puzzle piece types. The taxonomy file name is `{LANGUAGE}.json` (one of `evm.json`, `solana.json`, `aptos.json`, `sui.json`, `c_cpp.json`). Every type id in the file carries the language prefix (`EVM-`, `SOL-`, `APT-`, `SUI-`, `CPP-`); type counts differ per language (EVM 63, Solana 87, Aptos 70, Sui 63, C/C++ 48).
+3. **Language hints**: Read `{PATTERN_HINTS_PATH}` for language-specific markers (`{NEXTUP_HOME}/extraction/patterns/{LANGUAGE}.md`).
 
 ## Your Task
 
 For EVERY in-scope source file:
 
 1. Read the file completely
-2. For each function/method, check against ALL 45 taxonomy types
+2. For each function/method, check against EVERY type listed in the loaded `{LANGUAGE}.json` taxonomy (the full set for this language; do not skip categories J and onward, they are where most language-native patterns live)
 3. When you find a match, create a puzzle piece entry
 
 ### What Makes a Good Puzzle Piece
@@ -47,18 +47,18 @@ Output a valid JSON array. Each element is a puzzle piece:
 [
   {
     "id": "P001",
-    "type": "A01_ROUNDING_FLOOR",
+    "type": "SOL-A01",
     "category": "A",
-    "file": "core/xyk.rs",
+    "file": "programs/amm/src/instructions/swap.rs",
     "function": "swap_exact_amount_in",
     "line_start": 64,
     "line_end": 64,
     "description": "Output amount floored after fee deduction via checked_mul_dec_floor",
     "state_touched": ["output_reserve", "input_reserve"],
-    "actor": "any_user",
+    "actor": "signer",
     "direction": "favors_protocol",
-    "call_context": "execute::swap_exact_amount_in",
-    "contract": "dex",
+    "call_context": "swap_exact_amount_in",
+    "contract": "amm_program",
     "depends_on": [],
     "snippet": "let output = input_after_fee.checked_mul_dec_floor(output_reserve)?"
   }
@@ -67,18 +67,18 @@ Output a valid JSON array. Each element is a puzzle piece:
 
 ### Field Rules
 
-- **id**: Sequential P001, P002, ... 
-- **type**: Must match a taxonomy type ID + name (e.g., "A01_ROUNDING_FLOOR")
-- **category**: Single letter A-I matching the type
+- **id**: Sequential P001, P002, ... (pipeline-local identifier; not language-prefixed)
+- **type**: Language-prefixed taxonomy id (e.g. `EVM-A01`, `SOL-J01`, `APT-K02`, `SUI-L03`, `CPP-J04`). Must exist in the loaded `{LANGUAGE}.json` taxonomy.
+- **category**: Single uppercase letter matching the type (A-I inherited, J+ language-native).
 - **file**: Relative path from scope root
 - **function**: The function name containing this pattern
 - **line_start/line_end**: Exact line numbers
 - **description**: 1 sentence explaining WHAT the pattern does (not why it's dangerous)
 - **state_touched**: Array of state variable names this pattern reads or writes. Use the actual variable names from the code. This field is CRITICAL for combination matching.
-- **actor**: Who can trigger the code path: "any_user" | "owner" | "cron" | "self_callback" | "genesis"
-- **direction**: "favors_protocol" (user gets less) | "favors_user" (user gets more) | "neutral"
-- **call_context**: The public entry point that reaches this code (e.g., "execute::swap")
-- **contract**: Which contract/module this is in
+- **actor**: Who can trigger the code path. The valid set is per-language (see your `{LANGUAGE}.json` or the combinator script's declared actor vocabulary). Examples: EVM `any_user | owner | non_owner | keeper | multisig | self_callback | delegate`; Solana `signer | non_signer | pda | program | upgrade_authority | permissionless_crank | token_authority | mint_authority | multisig_signer | freeze_authority`; Aptos `signer | framework | governance | cap_holder | module_publisher | multisig_signer | delegate`; Sui `sender | shared_object_updater | package_upgrader | cap_holder | consensus | module_publisher`; C/C++ `main_thread | worker_thread | signal_handler | interrupt_handler | async_callback | module_init | destructor | setuid_caller | kernel`.
+- **direction**: One of `favors_protocol | favors_user | neutral | exploitable | latent`. Use the first three for DeFi contexts (EVM/Solana/Aptos/Sui). Use `exploitable` or `latent` for C/C++ where DeFi-centric directions don't apply.
+- **call_context**: The public entry point that reaches this code (e.g., `swap`, `execute::swap`, `0x1::coin::transfer`).
+- **contract**: The language's primary unit of code isolation — Solidity contract, Solana program, Move module, C/C++ translation unit or library.
 - **depends_on**: IDs of other pieces this piece depends on (e.g., a fee computation that depends on an oracle price). Use sparingly -- only for direct, obvious dependencies.
 - **snippet**: 1-5 lines of the actual code. Keep minimal but sufficient.
 
@@ -95,11 +95,12 @@ Output a valid JSON array. Each element is a puzzle piece:
 
 ## Quality Rules
 
-1. **Target 25-50 pieces** for a typical contract. Under 20 = you're being too selective. Over 60 = you're tagging boilerplate.
+1. **Target piece count scales with taxonomy size**: EVM 25-50, Solana 35-65 (more native categories), Aptos 30-55, Sui 25-50, C/C++ 20-45. Under the floor = too selective; over the ceiling = tagging boilerplate.
 2. Every piece MUST have a specific line number. No "somewhere in file X."
 3. The `state_touched` field must contain actual variable names from the code.
 4. Each piece should be describable in one sentence.
 5. Don't tag the same exact code twice under different types (pick the most specific type).
+6. Prefer language-native categories (J and beyond) when a match exists there. Inherited A-I categories are a fallback for generic patterns.
 
 ## Output
 

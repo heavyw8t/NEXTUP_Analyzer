@@ -1,0 +1,32 @@
+{
+  "min_categories": 2,
+  "require_shared_contract_or_call": true,
+  "require_interaction_link": true,
+  "eliminate_actor_conflict": true,
+  "eliminate_redundant_same_direction_rounding": true,
+  "eliminate_same_function_duplicate": true,
+  "eliminate_read_only_combos": true,
+  "eliminate_pure_defensive": true,
+  "eliminate_no_state_overlap": true,
+  "eliminate_all_neutral_same_context": true,
+  "custom_rules": [
+    "eliminate_view_only_without_bridge",
+    "eliminate_twap_without_atomic_bridge",
+    "eliminate_locked_initializer",
+    "eliminate_delegatecall_no_sink",
+    "eliminate_guarded_reentrancy",
+    "eliminate_subwei_rounding_no_amplifier",
+    "eliminate_unprofitable_flash",
+    "eliminate_authenticated_cross_chain",
+    "eliminate_slippage_absorbed_reserve_price",
+    "eliminate_timelocked_parameter",
+    "bonus_reentrancy_plus_read_write_gap",
+    "bonus_delegatecall_plus_selector_clash",
+    "bonus_flash_callback_plus_reserve_price",
+    "bonus_oracle_piece_with_external_call",
+    "bonus_category_J_K_L_weighting",
+    "bonus_actor_any_user_or_flash_borrower",
+    "chain_length_bonus_per_piece",
+    "duplicate_piece_penalty"
+  ]
+}

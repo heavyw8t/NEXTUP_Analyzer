@@ -754,11 +754,12 @@ Read the NEXTUP skill definition at `{NEXTUP_HOME}/SKILL.md`.
 
 #### Step NX-1: Spawn Extraction Agent
 
-Map `LANGUAGE` to pattern hints file:
-- `evm` → `solidity_evm.md`
-- `solana` → `rust_cosmwasm.md` (CosmWasm/Grug/Sylvia use same Rust patterns)
-- `aptos` → `move.md`
-- `sui` → `move.md`
+Map `LANGUAGE` to pattern hints file and taxonomy file:
+- `evm` → `solidity_evm.md`, `evm.json`
+- `solana` → `solana.md`, `solana.json`
+- `aptos` → `move.md`, `aptos.json`
+- `sui` → `move.md`, `sui.json`
+- `c_cpp` → `c_cpp.md`, `c_cpp.json`
 
 Read extraction agent prompt from `{NEXTUP_HOME}/extraction/extract_agent.md`.
 
@@ -770,7 +771,8 @@ Spawn one agent:
 Agent(subagent_type="general-purpose", model="sonnet", prompt="
 {PASTE EXTRACTION AGENT PROMPT with these replacements:}
 - {SCOPE_PATH} = {PROJECT_PATH}
-- {TAXONOMY_PATH} = {NEXTUP_HOME}/taxonomy/puzzle_taxonomy.json
+- {LANGUAGE} = {LANGUAGE}
+- {TAXONOMY_PATH} = {NEXTUP_HOME}/taxonomy/{LANGUAGE}.json
 - {PATTERN_HINTS_PATH} = {NEXTUP_HOME}/extraction/patterns/{pattern_hints_file}
 - {OUTPUT_PATH} = {NEXTUP_DIR}/pieces.json
 
@@ -791,12 +793,14 @@ Then identify puzzle pieces and write pieces.json.
 #### Step NX-2: Run Combinator (Zero Tokens)
 
 ```bash
-python3 {NEXTUP_HOME}/combinator/combine.py \
+python3 {NEXTUP_HOME}/combinator/combine_{LANGUAGE}.py \
   {NEXTUP_DIR}/pieces.json \
   {k} \
   {NEXTUP_DIR}/combos_ranked.json \
   --top {TOP_N}
 ```
+
+The combinator script is per-language (`combine_evm.py`, `combine_solana.py`, `combine_aptos.py`, `combine_sui.py`, `combine_c_cpp.py`). Each loads its own rules and weights from `{NEXTUP_HOME}/combinator/rules/{LANGUAGE}.json` and `{NEXTUP_HOME}/combinator/weights/{LANGUAGE}.json` and shares the BFS/scoring scaffolding in `{NEXTUP_HOME}/combinator/shared.py`.
 
 If Python not available, try `python` instead of `python3`. If both fail, log warning and skip to Phase 4b.
 

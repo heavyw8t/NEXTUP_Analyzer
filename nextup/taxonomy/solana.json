@@ -1,0 +1,1098 @@
+{
+  "version": "1.1.0",
+  "language": "solana",
+  "id_prefix": "SOL",
+  "categories": {
+    "A": "Arithmetic & Precision",
+    "B": "Access Control & Authorization",
+    "C": "State & Storage",
+    "D": "External Dependencies & Oracles",
+    "E": "Economic & DeFi Logic",
+    "F": "Control Flow & Ordering",
+    "G": "Token & Asset Handling",
+    "H": "Ordering & Timing",
+    "I": "Validation & Invariants",
+    "J": "Account Model",
+    "K": "PDA & Seeds",
+    "L": "CPI",
+    "M": "Lamports & Rent",
+    "N": "Sysvar & Clock",
+    "O": "SPL Token & Token-2022"
+  },
+  "types": [
+    {
+      "id": "SOL-A01",
+      "name": "ROUNDING_FLOOR",
+      "category": "A",
+      "description": "Integer division or checked_div that truncates toward zero when computing shares, rewards, or token amounts.",
+      "markers": [
+        "checked_div",
+        "checked_div_euclid",
+        "u64::checked_div",
+        "u128::checked_div",
+        "saturating_div",
+        ".floor()",
+        "Decimal::try_floor_u64",
+        "spl_math::precise_number",
+        "amount / shares",
+        "mul_div"
+      ],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SOL-A02",
+      "name": "ROUNDING_CEIL",
+      "category": "A",
+      "description": "Ceiling division applied to user-owed amounts (fee deduction, debt rounding, rent-exempt top-up).",
+      "markers": [
+        "(a + b - 1) / b",
+        "spl_math::precise_number::ceiling_div",
+        "Decimal::try_ceil_u64",
+        "u64::div_ceil",
+        "amount.checked_add(denom - 1)?.checked_div(denom)"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-A03",
+      "name": "MIXED_ROUNDING_DIRECTION",
+      "category": "A",
+      "description": "Floor and ceil used in the same deposit/withdraw or borrow/repay pair in a Solana vault or lending program.",
+      "markers": [
+        "floor on mint and ceil on burn",
+        "try_floor_u64 paired with try_ceil_u64",
+        "asymmetric rounding between deposit.rs and withdraw.rs"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-A04",
+      "name": "PRECISION_TRUNCATION",
+      "category": "A",
+      "description": "Downcasting u128 to u64, i64 to i32, or Decimal to raw integer units that loses information.",
+      "markers": [
+        "as u64",
+        "try_into::<u64>()",
+        "spl_math::uint::U192",
+        "Decimal::to_u64",
+        "Pubkey::to_bytes()[..8]"
+      ],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SOL-A05",
+      "name": "MULT_BEFORE_DIV",
+      "category": "A",
+      "description": "a * b / c ordering in reward-per-share, fee, or share-price math without widening to u128.",
+      "markers": [
+        "a.checked_mul(b)?.checked_div(c)",
+        "raw a * b / c on u64",
+        "missing upcast to u128",
+        "no spl_math::precise_number",
+        "no mul_div helper"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-A06",
+      "name": "CHECKED_ARITHMETIC_GAP",
+      "category": "A",
+      "description": "Mixing checked_* with raw +, -, *, /, or wrapping_* / saturating_* in the same flow.",
+      "markers": [
+        "wrapping_add",
+        "wrapping_sub",
+        "saturating_sub next to checked_add",
+        "unsafe arithmetic blocks",
+        "missing overflow-checks in release profile"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-A07",
+      "name": "ZERO_AMOUNT_PASSTHROUGH",
+      "category": "A",
+      "description": "Deposit, stake, swap, or claim instruction that accepts amount == 0 and still mutates state.",
+      "markers": [
+        "missing require!(amount > 0)",
+        "missing require_neq!(amount, 0)",
+        "no Anchor constraint on amount > 0"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-B01",
+      "name": "SIGNER_AUTHORITY",
+      "category": "B",
+      "description": "Instruction gated by Signer, has_one = authority, PDA authority match, or multisig vote.",
+      "markers": [
+        "Signer<'info>",
+        "#[account(has_one = authority)]",
+        "require_keys_eq!",
+        "invoke_signed with PDA seeds",
+        "spl_governance vote record"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-B03",
+      "name": "NO_ACCESS_CONTROL",
+      "category": "B",
+      "description": "Public instruction handler that mutates state or moves lamports/tokens with no Signer or authority check.",
+      "markers": [
+        "AccountInfo<'info> without checks",
+        "UncheckedAccount<'info>",
+        "no Signer in Accounts struct",
+        "no require! on authority.is_signer"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-B04",
+      "name": "GENESIS_BYPASS",
+      "category": "B",
+      "description": "Initialization-only path that runs once and sets program state.",
+      "markers": [
+        "#[account(init, payer = ..., space = ...)]",
+        "#[account(init, seeds = [...], bump)]",
+        "is_initialized flag",
+        "init_if_needed"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-B05",
+      "name": "PAUSE_GATE",
+      "category": "B",
+      "description": "Instruction gated by a paused/halted/emergency_stop flag stored in a config PDA.",
+      "markers": [
+        "require!(!config.paused)",
+        "#[account(constraint = !config.is_paused)]",
+        "guardian-operated pause instruction"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-C01",
+      "name": "LOOP_STORAGE_MUTATION",
+      "category": "C",
+      "description": "Loop body that mutates an account per iteration.",
+      "markers": [
+        "for acc in remaining_accounts.iter()",
+        "acc.try_borrow_mut_data()",
+        "state.vec.iter_mut()",
+        "per-iteration account.reload()"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-C02",
+      "name": "UNBOUNDED_ITERATION",
+      "category": "C",
+      "description": "Loop over remaining_accounts, a Vec<Pubkey>, or an AccountLoader range without a hard cap.",
+      "markers": [
+        "for r in ctx.remaining_accounts.iter() with no length check",
+        "for p in state.queue.iter() where queue is user-appendable",
+        "AccountLoader::load_init with attacker-controlled size"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-C03",
+      "name": "READ_WRITE_GAP",
+      "category": "C",
+      "description": "Account field read, CPI executes, then the same field written or relied on without reload.",
+      "markers": [
+        "let x = ctx.accounts.vault.amount; cpi::..(); use(x)",
+        "no vault.reload()? between reads",
+        "cached token_account.amount across invoke"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-C04",
+      "name": "DELETE_IN_LOOP",
+      "category": "C",
+      "description": "swap_remove/remove from a Vec inside a PDA while iterating, or close_account inside a loop.",
+      "markers": [
+        "state.entries.swap_remove(i) inside loop",
+        "per-iteration close_account CPI"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-C05",
+      "name": "COUNTER_INCREMENT",
+      "category": "C",
+      "description": "Monotonic counter inside a PDA used as nonce, order id, or position id.",
+      "markers": [
+        "state.next_id = state.next_id.checked_add(1)?",
+        "state.nonce += 1",
+        "order_id: u64 incremented in handler"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-C06",
+      "name": "COLLECT_THEN_ITERATE",
+      "category": "C",
+      "description": "Snapshot a Vec from an account before iterating, to avoid mutable-borrow conflicts.",
+      "markers": [
+        "let snapshot: Vec<_> = state.entries.clone()",
+        "collect::<Vec<_>>() over AccountLoader iterator"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-D01",
+      "name": "ORACLE_PRICE_DEP",
+      "category": "D",
+      "description": "Computation depends on Pyth, Switchboard, or in-program oracle feed.",
+      "markers": [
+        "pyth_sdk_solana::load_price_feed_from_account_info",
+        "PriceFeed::get_price_unchecked",
+        "PriceFeed::get_price_no_older_than",
+        "switchboard_solana::AggregatorAccountData::get_result",
+        "switchboard_v2::AggregatorAccountData::check_staleness"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-D02",
+      "name": "ORACLE_STALENESS",
+      "category": "D",
+      "description": "Explicit staleness check on oracle publish_time vs Clock::get().unix_timestamp.",
+      "markers": [
+        "get_price_no_older_than(&clock, max_age)",
+        "clock.unix_timestamp - price.publish_time > MAX_AGE",
+        "aggregator.check_staleness(clock.unix_timestamp, staleness_threshold)"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-D03",
+      "name": "CPI",
+      "category": "D",
+      "description": "Any Cross-Program Invocation. Canonical cross-program bridge piece.",
+      "markers": [
+        "solana_program::program::invoke",
+        "solana_program::program::invoke_signed",
+        "CpiContext::new",
+        "CpiContext::new_with_signer",
+        "anchor_spl::token::transfer",
+        "anchor_spl::token_2022::transfer_checked",
+        "spl_token::instruction::transfer"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-D04",
+      "name": "ACCOUNT_STATE_READ",
+      "category": "D",
+      "description": "Read of another program's account state (Solana has no RPC; all reads are passed-in accounts).",
+      "markers": [
+        "Account<'info, T> with foreign owner",
+        "AccountLoader<'info, T> on foreign program",
+        "account.try_borrow_data() with external owner",
+        "pyth_sdk_solana::load_price_feed_from_account_info"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-D05",
+      "name": "ORACLE_ERROR_SWALLOWED",
+      "category": "D",
+      "description": "Oracle load or price fetch that falls back to a default value, zero, or last-known price on error.",
+      "markers": [
+        "get_price_no_older_than(...).unwrap_or(default)",
+        "if let Ok(p) = ... { ... } else { skip }",
+        ".unwrap_or_default() on PriceFeed",
+        "match pyth_load { Err(_) => Price::default(), ... }"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-E01",
+      "name": "FIRST_DEPOSITOR_PATH",
+      "category": "E",
+      "description": "Branch when total_supply == 0 in an SPL-share vault.",
+      "markers": [
+        "if vault.total_shares == 0",
+        "shares = amount when supply is zero",
+        "MINIMUM_LIQUIDITY seeded to dead address"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-E02",
+      "name": "PROPORTIONAL_SHARE",
+      "category": "E",
+      "description": "SPL share mint proportional to deposit amount / total assets.",
+      "markers": [
+        "shares = amount.checked_mul(supply)?.checked_div(vault.total_assets)?",
+        "mint_to CPI keyed to that computation",
+        "LP mint authority held by vault PDA"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-E03",
+      "name": "FEE_COMPUTATION",
+      "category": "E",
+      "description": "Fee computed as bps of a user amount, with optional protocol fee split.",
+      "markers": [
+        "amount * fee_bps / 10_000",
+        "fee = amount.checked_mul(config.fee_bps)?.checked_div(BPS_DENOMINATOR)?",
+        "protocol_fee_share"
+      ],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SOL-E04",
+      "name": "SLIPPAGE_PROTECTION",
+      "category": "E",
+      "description": "User-supplied min_amount_out / max_amount_in passed in InstructionData.",
+      "markers": [
+        "require_gte!(amount_out, min_amount_out, ErrorCode::SlippageExceeded)",
+        "minimum_amount_out: u64 in ix_data"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-E05",
+      "name": "PRICE_FROM_RESERVES",
+      "category": "E",
+      "description": "AMM spot price from on-chain token-account reserves.",
+      "markers": [
+        "pool.reserve_a / pool.reserve_b",
+        "token_a_vault.amount",
+        "token_b_vault.amount",
+        "constant-product swap math"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-E06",
+      "name": "PASSIVE_ORDER_GEN",
+      "category": "E",
+      "description": "Program-generated orders placed by crank (e.g., Phoenix seat market makers, DLMM bin liquidity).",
+      "markers": [
+        "crank instruction places orders without a user signer",
+        "algorithmic bin rebalancing",
+        "place_order invoked by PDA authority"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-E07",
+      "name": "CLEARING_PRICE_SELECTION",
+      "category": "E",
+      "description": "Auction or batch clearing price inside a Solana order-book or auction program.",
+      "markers": [
+        "settlement_price",
+        "clearing_slot",
+        "uniform_price_auction helper",
+        "FairAuction::clear"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-E08",
+      "name": "MINIMUM_SIZE_CHECK",
+      "category": "E",
+      "description": "Minimum order/deposit size enforced to prevent dust.",
+      "markers": [
+        "require_gte!(amount, MIN_DEPOSIT)",
+        "min_lot_size",
+        "MINIMUM_LIQUIDITY"
+      ],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SOL-F02",
+      "name": "CANCEL_BEFORE_CREATE",
+      "category": "F",
+      "description": "Batch instruction that processes cancellations before new creations in the same tx or crank pass.",
+      "markers": [
+        "process_cancels(&mut book)?; process_places(&mut book)?;",
+        "batch close_orders before place_orders"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-F03",
+      "name": "MULTI_HOP_CHAIN",
+      "category": "F",
+      "description": "Multi-hop swap route: output of hop N feeds hop N+1 via CPI.",
+      "markers": [
+        "Jupiter-style SwapRoute",
+        "route_plan: Vec<RoutePlanStep>",
+        "shared_accounts_route",
+        "exact_out_route",
+        "sequential CPI into multiple AMM programs"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-F05",
+      "name": "EARLY_RETURN_BRANCH",
+      "category": "F",
+      "description": "Conditional return Ok(()) that skips state updates (checkpoints, fee accrual, reward index bump).",
+      "markers": [
+        "if amount == 0 { return Ok(()); }",
+        "guard clause returning Ok(()) before invariant update"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-G01",
+      "name": "FUND_VERIFICATION",
+      "category": "G",
+      "description": "Assertion that a token account actually received the expected amount.",
+      "markers": [
+        "balance-before/balance-after around token::transfer",
+        "require_eq!(vault.amount - pre, amount)",
+        "post-CPI reload() then check"
+      ],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SOL-G02",
+      "name": "REFUND_CALCULATION",
+      "category": "G",
+      "description": "Computation of excess lamports / tokens returned to user after an operation.",
+      "markers": [
+        "refund_lamports = deposited - used",
+        "token::transfer(cpi_ctx, refund_amount)?",
+        "system_program::transfer for lamport refund"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-G03",
+      "name": "MINT_AND_BURN",
+      "category": "G",
+      "description": "Mint or burn SPL / Token-2022 supply via CPI.",
+      "markers": [
+        "anchor_spl::token::mint_to",
+        "anchor_spl::token::burn",
+        "anchor_spl::token_2022::mint_to",
+        "spl_token::instruction::mint_to",
+        "spl_token_2022::instruction::burn_checked"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-G04",
+      "name": "DUST_ACCUMULATION",
+      "category": "G",
+      "description": "Repeated floor rounding in a per-user loop that accumulates residual lamports in the vault PDA.",
+      "markers": [
+        "floor in for user in users loop",
+        "per-iteration checked_div with remainder dropped",
+        "missing remainder accounting"
+      ],
+      "typical_direction": "favors_protocol"
+    },
+    {
+      "id": "SOL-H01",
+      "name": "SLOT_DISCRIMINATION",
+      "category": "H",
+      "description": "Logic that treats items created in the current Clock::slot differently from prior slots; also covers current-epoch vs prior-epoch logic.",
+      "markers": [
+        "if entry.created_slot == clock.slot",
+        "if position.open_epoch == clock.epoch",
+        "slot-age comparisons"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-H02",
+      "name": "MAKER_TAKER_SPLIT",
+      "category": "H",
+      "description": "Different fee rates based on order timing in a Solana orderbook (Phoenix, OpenBook, Zeta).",
+      "markers": [
+        "maker_fee_bps",
+        "taker_fee_bps",
+        "fill-side fee selection inside match_orders"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-H03",
+      "name": "ORDER_ID_MANIPULATION",
+      "category": "H",
+      "description": "Packed encoding of price+sequence into a u128 order id for sort-order control (OpenBook-style).",
+      "markers": [
+        "order_id = (price as u128) << 64 | seq_num",
+        "bitwise NOT for descending sort",
+        "FixedOrderedVec",
+        "critbit tree node keys"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-I01",
+      "name": "INVARIANT_PRESERVATION",
+      "category": "I",
+      "description": "Explicit mathematical invariant assertion after state mutation (constant product, sum(user_deposit) == vault.total_deposit).",
+      "markers": [
+        "post-op require!(reserve_a * reserve_b >= k_before)",
+        "require_eq!(sum_of_users, vault.total)"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-I02",
+      "name": "BALANCE_ACCOUNTING",
+      "category": "I",
+      "description": "Assertion that token/lamport inflows equal outflows plus fees.",
+      "markers": [
+        "balance-before / balance-after deltas around CPI transfers",
+        "vault amount diff matches state.total_deposited diff"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-J01",
+      "name": "MISSING_OWNER_CHECK",
+      "category": "J",
+      "description": "An AccountInfo or UncheckedAccount is deserialized or trusted without verifying account.owner == expected_program_id.",
+      "markers": [
+        "AccountInfo<'info> without require_keys_eq!(acc.owner, &expected::ID)",
+        "raw Account::try_from on untrusted input",
+        "missing #[account(owner = expected)]",
+        "manual from_account_info without owner guard"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-J02",
+      "name": "MISSING_SIGNER_CHECK",
+      "category": "J",
+      "description": "Authority-dependent instruction where the supposed authority is not constrained to be a Signer.",
+      "markers": [
+        "authority passed as AccountInfo or UncheckedAccount",
+        "missing require!(ctx.accounts.authority.is_signer)",
+        "no Signer<'info> on authority field",
+        "#[account(signer)] absent"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-J03",
+      "name": "MISSING_DISCRIMINATOR_CHECK",
+      "category": "J",
+      "description": "Account data deserialized without checking the 8-byte Anchor discriminator or a manual type tag.",
+      "markers": [
+        "manual try_from_slice on raw data",
+        "zero_copy(unsafe) without AccountLoader::load",
+        "Account::try_deserialize_unchecked",
+        "missing magic-number check in non-Anchor programs"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-J04",
+      "name": "ACCOUNT_ALIASING",
+      "category": "J",
+      "description": "Two or more mutable accounts in the same instruction are not constrained to be distinct.",
+      "markers": [
+        "two Account<'info, T> fields both mut with no constraint = a.key() != b.key()",
+        "missing require_keys_neq!",
+        "no has_one discriminating them",
+        "seeds that can collide"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-J05",
+      "name": "ACCOUNT_TYPE_CONFUSION",
+      "category": "J",
+      "description": "Same discriminator prefix or overlapping layout used by multiple account types so one can be substituted for another.",
+      "markers": [
+        "shared #[account] struct prefix",
+        "manual discriminator assignment with reused constants",
+        "duplicate Account<T> sizes with similar leading fields",
+        "Anchor v0.24-class collisions"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-J06",
+      "name": "UNINITIALIZED_ACCOUNT_READ",
+      "category": "J",
+      "description": "Program reads account data before verifying the account has been initialized (all-zero state treated as valid).",
+      "markers": [
+        "missing is_initialized flag check",
+        "no discriminator verification",
+        "account.data_len() > 0 used as proxy for init",
+        "init_if_needed with default-zero exploitable state"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-J07",
+      "name": "REINITIALIZATION_ATTACK",
+      "category": "J",
+      "description": "Account can be closed and re-initialized with attacker-controlled state, or init_if_needed silently reuses an existing account with residual data.",
+      "markers": [
+        "init_if_needed",
+        "manual close without discriminator-to-CLOSED sentinel",
+        "re-fundable closed account",
+        "revival-after-close-in-same-tx pattern"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-J08",
+      "name": "REMAINING_ACCOUNTS_INJECTION",
+      "category": "J",
+      "description": "ctx.remaining_accounts is iterated and used without per-account owner/type/signer/key-uniqueness validation.",
+      "markers": [
+        "for acc in ctx.remaining_accounts with no owner check",
+        "no require_keys_eq!(acc.owner, &expected::ID)",
+        "no discriminator load",
+        "no duplicate detection against named accounts"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-K01",
+      "name": "UNCHECKED_PDA_DERIVATION",
+      "category": "K",
+      "description": "PDA supplied by the caller is not verified via find_program_address or an Anchor seeds constraint.",
+      "markers": [
+        "PDA as UncheckedAccount with no Pubkey::find_program_address comparison",
+        "missing seeds = [...] on #[account]",
+        "create_program_address with attacker-influenced bump"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-K02",
+      "name": "SEED_COLLISION",
+      "category": "K",
+      "description": "Two PDA seed schemas can produce identical byte sequences, enabling one PDA to masquerade as another.",
+      "markers": [
+        "variable-length user-controlled byte seed adjacent to static-length seed",
+        "shared b\"data\" prefix across account types",
+        "no length-prefix byte"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-K03",
+      "name": "BUMP_NOT_STORED",
+      "category": "K",
+      "description": "Program re-derives a PDA on every access, recomputes bump inconsistently, or accepts user-supplied bump.",
+      "markers": [
+        "find_program_address called inside handler",
+        "no bump field on the PDA's account struct",
+        "bump read from instruction data"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-K04",
+      "name": "CANONICAL_BUMP_MISSING",
+      "category": "K",
+      "description": "PDA created or signed with a non-canonical bump, or create_program_address with user bump rather than find_program_address.",
+      "markers": [
+        "Pubkey::create_program_address(&seeds_with_user_bump, &program_id)",
+        "bump: u8 from ix data used in invoke_signed",
+        "no Anchor bump constraint"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-K05",
+      "name": "PDA_AUTHORITY_LEAK",
+      "category": "K",
+      "description": "A PDA used as signer in invoke_signed also controls unrelated resources.",
+      "markers": [
+        "single PDA seed schema signs transfers in both privileged and permissionless instructions",
+        "shared authority PDA across swap and emergency_withdraw"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-K06",
+      "name": "ATTACKER_CONTROLLED_SEEDS",
+      "category": "K",
+      "description": "PDA seeds include attacker-controlled bytes whose uniqueness or length is not bounded.",
+      "markers": [
+        "unbounded String::as_bytes() seed",
+        "user-supplied Pubkey seed without has_one",
+        "numeric seeds without domain separator",
+        "front-runnable init seeds"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-L01",
+      "name": "CPI_TARGET_UNCHECKED",
+      "category": "L",
+      "description": "Target program id for the CPI is not validated against a hardcoded constant.",
+      "markers": [
+        "invoke with instruction.program_id from AccountInfo without require_keys_eq!",
+        "missing #[account(address = spl_token::ID)]",
+        "missing Program<'info, Token> type"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-L02",
+      "name": "MISSING_SIGNER_SEEDS",
+      "category": "L",
+      "description": "invoke_signed uses empty or wrong signers_seeds, or authority PDA is not actually signing.",
+      "markers": [
+        "invoke_signed(&ix, accounts, &[])",
+        "incorrect &[&[seed, &[bump]]] order",
+        "mismatched bump with stored canonical bump"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-L03",
+      "name": "CPI_REENTRY_RISK",
+      "category": "L",
+      "description": "CPI target program may re-enter the caller while the caller holds a mutable borrow or has not yet updated state.",
+      "markers": [
+        "CPI issued before state.save",
+        "CPI to program that can call back",
+        "nested CPI chains near 4-level depth limit",
+        "mutable account still in scope during CPI"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-L04",
+      "name": "CPI_RETURN_UNCHECKED",
+      "category": "L",
+      "description": "sol_get_return_data() is not read, or is read without verifying the returning program id matches expected target.",
+      "markers": [
+        "CPI with expected return data but no get_return_data() call",
+        "return-data used without program_id check",
+        "assumption that empty return data means success"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-L05",
+      "name": "ACCOUNT_RELOAD_MISSING",
+      "category": "L",
+      "description": "After a CPI modifies an account, caller reads cached pre-CPI data without calling reload() or re-deserializing.",
+      "markers": [
+        "post-CPI read of ctx.accounts.x.amount with no ctx.accounts.x.reload()?",
+        "stale token_account.amount after token::transfer"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-L06",
+      "name": "ARBITRARY_CPI",
+      "category": "L",
+      "description": "Instruction forwards attacker-supplied program id and account list into invoke.",
+      "markers": [
+        "invoke with user-supplied program_id",
+        "routing loop over remaining_accounts with user-controlled program ids",
+        "DEX-aggregator-style generic forwarder without allowlist"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-L07",
+      "name": "CPI_OWNER_CHANGE",
+      "category": "L",
+      "description": "CPI target can call system_program::assign, changing the owner of an account the caller still treats as its own.",
+      "markers": [
+        "post-CPI account.try_borrow_data() without require_keys_eq!(account.owner, &crate::ID)",
+        "trust in account.owner as stable across CPI"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-M01",
+      "name": "DIRECT_LAMPORT_ARITHMETIC",
+      "category": "M",
+      "description": "Program mutates account.lamports directly, bypassing system_program::transfer, potentially violating rent or conservation invariants.",
+      "markers": [
+        "**from.try_borrow_mut_lamports()? -= amount",
+        "**to.try_borrow_mut_lamports()? += amount",
+        "manual lamport movement between program-owned accounts without System Program CPI"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-M02",
+      "name": "RENT_EXEMPT_CHECK_MISSING",
+      "category": "M",
+      "description": "Account shrunk via realloc, or lamport withdrawn, without checking remaining balance still covers rent.",
+      "markers": [
+        "account.realloc(new_len, false) with no Rent::get()?.minimum_balance(new_len) check",
+        "lamports -= amt followed by use of from account without rent check"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-M03",
+      "name": "REALLOC_NO_ZERO_FILL",
+      "category": "M",
+      "description": "realloc(new_len, false) used when growing an account, leaving stale residual bytes.",
+      "markers": [
+        "account.realloc(new_len, false) on growth path",
+        "missing zero-fill of the newly-extended region",
+        "trust in realloc default"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-M04",
+      "name": "RENT_SKIM_ON_CLOSE",
+      "category": "M",
+      "description": "Close handler drains lamports before the Anchor close = receiver mechanism or before setting discriminator to CLOSED sentinel.",
+      "markers": [
+        "**acc.lamports.borrow_mut() = 0 without zeroing data + setting discriminator",
+        "partial lamport transfer in close",
+        "missing close = recipient on #[account(close = recipient)]"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-M05",
+      "name": "SIZE_DISCREPANCY_ON_REALLOC",
+      "category": "M",
+      "description": "realloc length does not match the serialized size of the new struct, causing truncation or over-read.",
+      "markers": [
+        "realloc(CONST_SIZE, ...) that diverges from INIT_SPACE",
+        "hand-counted byte sizes that drift",
+        "Borsh-serialized length > allocated length"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-N01",
+      "name": "CLOCK_DRIFT_ASSUMPTION",
+      "category": "N",
+      "description": "Program relies on Clock::unix_timestamp precision below validator-estimation drift, or treats it as strictly monotonic.",
+      "markers": [
+        "cooldown windows shorter than ~5s keyed on unix_timestamp",
+        "equality check == on unix_timestamp",
+        "absence of slot-based alternative"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-N02",
+      "name": "SLOT_VS_UNIX_TIMESTAMP_CONFUSION",
+      "category": "N",
+      "description": "Program mixes Clock::slot and Clock::unix_timestamp for the same timing concept.",
+      "markers": [
+        "config stores period_slots but handler reads unix_timestamp",
+        "arithmetic slot - unix_timestamp",
+        "inconsistent units across initiate/complete handlers"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-N03",
+      "name": "SYSVAR_SHARED_READ",
+      "category": "N",
+      "description": "Same sysvar account (Clock, Rent, Instructions, SlotHashes, StakeHistory, EpochSchedule, RecentBlockhashes) read by multiple pieces as a shared trust anchor.",
+      "markers": [
+        "Sysvar<'info, Clock> across multiple instructions",
+        "sysvar::instructions::load_instruction_at_checked in several flash-loan guards",
+        "SlotHashes read for randomness or ancestry"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-N04",
+      "name": "RECENT_BLOCKHASHES_MISUSE",
+      "category": "N",
+      "description": "Use of deprecated RecentBlockhashes sysvar (or SlotHashes) as a source of randomness without understanding validator influence.",
+      "markers": [
+        "sysvar::recent_blockhashes::RecentBlockhashes",
+        "SlotHashes read as entropy",
+        "commit-reveal schemes keyed on last blockhash only"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-N05",
+      "name": "STAKE_HISTORY_ASSUMPTION",
+      "category": "N",
+      "description": "Staking logic that assumes StakeHistory is always current or available without validating the account.",
+      "markers": [
+        "sysvar::stake_history::StakeHistory without owner/address check",
+        "assumption of full activation/deactivation schedule coverage"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-N06",
+      "name": "SYSVAR_SPOOFING",
+      "category": "N",
+      "description": "Sysvar passed as raw AccountInfo with no address check, so an attacker passes a fake account.",
+      "markers": [
+        "AccountInfo named instructions without #[account(address = sysvar::instructions::ID)]",
+        "load_instruction_at_checked on unchecked account",
+        "missing require_keys_eq!(acc.key(), &sysvar::clock::ID)"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-O01",
+      "name": "MINT_AUTHORITY_UNVERIFIED",
+      "category": "O",
+      "description": "Program trusts a mint without checking mint.mint_authority matches the expected PDA or revoked state.",
+      "markers": [
+        "missing require_keys_eq!(mint.mint_authority.unwrap(), expected_pda)",
+        "missing has_one = mint_authority",
+        "unchecked COption<Pubkey>"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-O02",
+      "name": "ATA_NOT_CANONICAL",
+      "category": "O",
+      "description": "Associated Token Account is not validated against the canonical get_associated_token_address.",
+      "markers": [
+        "TokenAccount passed without associated_token::mint / associated_token::authority",
+        "manual ATA derivation skipped",
+        "create_associated_token_account without address check"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-O03",
+      "name": "TRANSFER_HOOK_IGNORED",
+      "category": "O",
+      "description": "Program interacts with a Token-2022 mint that may carry the TransferHook extension and does not account for CU or revert risk.",
+      "markers": [
+        "anchor_spl::token_2022::transfer_checked without extension allowlist",
+        "missing ExtensionType::TransferHook check",
+        "missing additional-account list for hook"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-O04",
+      "name": "TRANSFER_FEE_IGNORED",
+      "category": "O",
+      "description": "Program assumes transfer_checked moves the gross amount; Token-2022 TransferFee extension deducts a fee.",
+      "markers": [
+        "accounting uses gross amount after transfer_checked on a fee-bearing mint",
+        "missing ExtensionType::TransferFeeConfig handling",
+        "no calculate_epoch_fee call"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-O05",
+      "name": "FREEZE_AUTHORITY_IGNORED",
+      "category": "O",
+      "description": "Mint has a live freeze authority that can freeze protocol-owned ATAs or user ATAs, DoS'ing redemption / rewards.",
+      "markers": [
+        "mint.freeze_authority check missing",
+        "unchecked COption<Pubkey> for freeze authority",
+        "no allowlist of safe freeze-authority pubkeys"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-O06",
+      "name": "DECIMALS_ASSUMPTION",
+      "category": "O",
+      "description": "Program hardcodes decimals rather than reading mint.decimals, or uses one mint's decimals in arithmetic against another mint's amount.",
+      "markers": [
+        "const DECIMALS: u8 = 9",
+        "amount * 10u64.pow(9)",
+        "cross-mint math with single decimals constant",
+        "missing mint.decimals read"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-O07",
+      "name": "INTEREST_BEARING_IGNORED",
+      "category": "O",
+      "description": "Token-2022 InterestBearing extension means mint.supply / UI amount drifts over time; static-amount accounting treats it as flat.",
+      "markers": [
+        "ExtensionType::InterestBearingConfig present but no amount_to_ui_amount usage",
+        "accounting on raw amount without interest factor"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-O08",
+      "name": "NON_TRANSFERABLE_IGNORED",
+      "category": "O",
+      "description": "NonTransferable extension prevents third-party transfer; protocol expects to move user tokens but will revert.",
+      "markers": [
+        "ExtensionType::NonTransferable not checked",
+        "DEX/vault that assumes it can always transfer custody"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-O09",
+      "name": "CONFIDENTIAL_TRANSFER_IGNORED",
+      "category": "O",
+      "description": "ConfidentialTransfer extension hides balances from direct reads; protocol that keys accounting off token_account.amount reads zero.",
+      "markers": [
+        "ExtensionType::ConfidentialTransferAccount",
+        "direct token_account.amount usage on confidential-capable mints",
+        "missing non-confidential pending-balance check"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-O10",
+      "name": "PERMANENT_DELEGATE_PRESENT",
+      "category": "O",
+      "description": "Mint has PermanentDelegate extension that can transfer FROM any ATA of that mint without owner approval.",
+      "markers": [
+        "ExtensionType::PermanentDelegate present",
+        "vault PDA holds tokens of such a mint with no drain mitigation",
+        "no allowlist of trusted permanent delegates"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-O11",
+      "name": "MINT_CLOSE_AUTHORITY",
+      "category": "O",
+      "description": "Mint has MintCloseAuthority extension; mint can be closed and subsequent reads return zero decimals / supply.",
+      "markers": [
+        "ExtensionType::MintCloseAuthority",
+        "reads of mint.decimals / mint.supply without MintCloseAuthority-aware guard"
+      ],
+      "typical_direction": "favors_user"
+    },
+    {
+      "id": "SOL-O12",
+      "name": "DEFAULT_ACCOUNT_STATE_FROZEN",
+      "category": "O",
+      "description": "DefaultAccountState extension makes new ATAs start frozen; protocol's init-then-use pattern fails until a thaw.",
+      "markers": [
+        "ExtensionType::DefaultAccountState == Frozen",
+        "init_associated_token_account then immediately transfer without thaw handling"
+      ],
+      "typical_direction": "neutral"
+    },
+    {
+      "id": "SOL-O13",
+      "name": "CPI_GUARD_VS_DELEGATION",
+      "category": "O",
+      "description": "User enabled CPI Guard on their token account; program relies on delegated CPI transfer, which fails silently or errors.",
+      "markers": [
+        "ExtensionType::CpiGuard",
+        "protocol expects approve + CPI transfer",
+        "missing fallback to direct signer transfer"
+      ],
+      "typical_direction": "neutral"
+    }
+  ]
+}
