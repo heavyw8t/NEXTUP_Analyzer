@@ -78,58 +78,34 @@ If build succeeds:
 
 ## unified-vuln-db -- Your Attack Pattern Library
 
-### Local Database Tools (~3.4k indexed findings)
+### Local CSV-backed Index (19,370 findings, MEDIUM + HIGH only)
+
+All queries hit an in-process BM25 index over a curated Solodit-derived CSV. No network, no ChromaDB. Per-language shards; for Sui queries use `filters={"protocol_types": ["Move"]}` (128 Move rows).
 
 | Tool | What It Gives You | When to Use |
 |------|-------------------|-------------|
-| `get_root_cause_analysis(bug_class)` | Why specific bug classes occur | Step 1c -- prime your analysis |
-| `get_attack_vectors(bug_class)` | How exploits work mechanically | Depth agents -- understand exploit mechanics |
-| `analyze_code_pattern(pattern, code_context)` | Pattern matching against known vulns | Step 6 -- validate hypotheses |
-| `validate_hypothesis(hypothesis)` | Cross-reference against known bugs | Step 6 -- before verification |
-| `get_similar_findings(description)` | Similar bugs from other audits | Step 6 -- calibrate severity |
+| `get_root_cause_analysis(bug_class)` | Summary excerpts of past findings matching the bug class | Step 1c -- prime your analysis |
+| `get_attack_vectors(bug_class)` | Similar findings clustered by attack mechanism | Depth agents -- understand exploit mechanics |
+| `analyze_code_pattern(pattern, code_context, protocol_type)` | BM25 matches with reasoning material | Step 6 -- validate hypotheses |
+| `validate_hypothesis(hypothesis)` | Cross-reference against indexed findings | Step 6 -- before verification |
+| `get_similar_findings(pattern)` | Top-k BM25 row dicts | Step 6 -- calibrate severity |
+| `get_common_vulnerabilities(protocol_type)` | Tag/severity aggregation | Pre-depth scoping |
+| `get_knowledge_stats()` | Index readiness probe | Agent 1A startup probe |
 
-**Bug classes**: access-control, arithmetic-precision, oracle-manipulation, dos, ability-misuse, bit-shift-overflow, object-ownership
+**Unavailable under CSV** (return explicit `{error, fallback}`):
+- `get_similar_exploit_code` -- CSV has no PoC source code.
+- `get_fix_patterns` -- CSV has no recommendations or diff patches.
+
+When local results are thin (< 5 hits), expand via `mcp__tavily-search__tavily_search` or `WebSearch` rather than a live Solodit call.
+
+**Bug classes** (seed terms): access-control, arithmetic-precision, oracle-manipulation, dos, ability-misuse, bit-shift-overflow, object-ownership.
 
 **Sui-specific query tips**:
-- For ability misuse: `get_root_cause_analysis('ability-misuse')` or `get_attack_vectors('access-control')` with Move context
-- For object ownership: `get_similar_findings('shared object concurrent modification')` or `get_attack_vectors('object-ownership')`
-- For bit-shift: `get_root_cause_analysis('bit-shift-overflow')` or `get_attack_vectors('arithmetic-precision')` with shift context
+- Ability misuse: `get_root_cause_analysis('ability-misuse')` or `get_attack_vectors('access-control')` with Move context.
+- Object ownership: `get_similar_findings('shared object concurrent modification')` or `get_attack_vectors('object-ownership')`.
+- Bit-shift: `get_root_cause_analysis('bit-shift-overflow')` or `get_attack_vectors('arithmetic-precision')` with shift context.
 
-### Live Solodit API (50k+ findings -- MANDATORY for comprehensive analysis)
-
-| Tool | What It Gives You | When to Use |
-|------|-------------------|-------------|
-| `search_solodit_live(...)` | Full Solodit database search | **MANDATORY** during hypothesis validation and deep dives |
-
-**MANDATORY Usage -- Call `search_solodit_live` when:**
-1. Local search returns < 5 results -> Expand search
-2. Validating HIGH/CRITICAL hypothesis -> Cross-reference comprehensively
-3. Protocol-specific deep dive -> Search by protocol name
-4. Understanding attack patterns -> Search by vulnerability tags
-
-**Parameters:**
-```
-search_solodit_live(
-  keywords="object ownership shared concurrent",  # Free-text search
-  impact=["HIGH", "MEDIUM"],                      # Severity filter
-  tags=["Move", "Sui", "Object", "Ability"],      # Solodit vulnerability tags
-  protocol="{PROTOCOL_NAME}",                     # Protocol name (partial match)
-  protocol_category=["DeFi"],                     # Category filter (array)
-  firms=["{RELEVANT_FIRM}"],                       # Audit firm filter
-  language="Move",                                # Language: Solidity/Rust/Cairo/Move
-  quality_score=3,                                # Min quality (0-5), use >=3
-  rarity_score=3,                                 # Min rarity (0-5), unique patterns
-  min_finders=1, max_finders=1,                  # Solo finds only
-  sort_by="Quality",                              # Quality/Recency/Rarity
-  sort_direction="Desc",                          # Desc/Asc
-  max_results=20                                  # Up to 50
-)
-```
-
-**Common Solodit Tags for Sui/Move**: Move, Sui, Object, Shared Object, PTB, Ability, Bit Shift,
-Access Control, Oracle, Logic Error, DOS, Griefing, Precision Loss, Rounding, Initialization,
-Upgrade, Front-running, Price Manipulation, Governance, Cross-chain,
-Slippage, Timestamp, Type Safety, Hot Potato
+**Common tags available via `filters.tag` substring (Sui/Move)**: Move, Sui, Object, Shared Object, PTB, Ability, Bit Shift, Access Control, Oracle, Logic Error, DOS, Griefing, Precision Loss, Rounding, Initialization, Upgrade, Front-running, Price Manipulation, Governance, Cross-chain, Slippage, Timestamp, Type Safety, Hot Potato.
 
 ---
 

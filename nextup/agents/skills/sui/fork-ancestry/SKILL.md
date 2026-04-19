@@ -47,24 +47,18 @@ Grep the codebase for known parent Sui package signatures:
 
 For each detected parent (confidence MEDIUM or HIGH):
 
-### 2a. Solodit Search (two queries, run in parallel)
+### 2a. Local CSV-backed Search (two queries, run in parallel)
 ```
-// Query 1: Known high-quality issues
-search_solodit_live(
-  keywords="{parent_name} sui move",
-  impact=["HIGH", "CRITICAL"],
-  language="Move",
-  quality_score=3,
-  sort_by="Quality",
-  max_results=15
+// Query 1: Known issues mentioning the parent name in the summary
+mcp__unified-vuln-db__get_similar_findings(
+  pattern="{parent_name} vulnerability",
+  limit=15,
+  severity="high"
 )
-// Query 2: Fork-specific divergence issues
-search_solodit_live(
-  keywords="{parent_name} fork modified sui object",
-  impact=["HIGH", "MEDIUM"],
-  language="Move",
-  sort_by="Rarity",
-  max_results=10
+// Query 2: Fork-divergence-style patterns
+mcp__unified-vuln-db__get_similar_findings(
+  pattern="{parent_name} fork modified divergence",
+  limit=10
 )
 ```
 
@@ -77,7 +71,7 @@ tavily_search(query="{parent_name} sui move vulnerability exploit audit finding 
 
 Compile results into:
 
-| Parent | Known Issue | Severity | Root Cause | Solodit Ref | Applicable to Fork? |
+| Parent | Known Issue | Severity | Root Cause | Ref | Applicable to Fork? |
 |--------|-----------|----------|------------|-------------|---------------------|
 | {parent} | {issue title} | {severity} | {brief root cause} | {link/ID} | YES / NO / CHECK |
 

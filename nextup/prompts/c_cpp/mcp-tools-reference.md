@@ -141,17 +141,20 @@ grep -rn '{FUNCTION_NAME}(' {PROJECT_ROOT} \
 
 ## unified-vuln-db - Vulnerability Pattern Library (MCP)
 
-These MCP tools are language-agnostic and remain useful for C/C++ audits:
+Local CSV-backed BM25 index with 19,370 MEDIUM + HIGH findings. For C/C++ queries use `filters={"protocol_types": ["C"]}` (6 rows) or `["C++"]` (22 rows); the CSV has thin C/C++ coverage, so most queries should fall back to WebSearch + CVE/CWE lookup.
 
 | Tool | When to Use | C/C++ Query Tips |
 |------|-------------|-----------------|
-| `search_solodit_live(keywords, language="C++")` | Search for known C/C++ vulnerability patterns | Use CVE IDs, CWE IDs, or bug class names |
 | `get_root_cause_analysis(bug_class)` | Understand bug class mechanics | e.g., "buffer-overflow", "use-after-free", "integer-overflow" |
 | `get_attack_vectors(bug_class)` | Exploit patterns | e.g., "heap-spray", "type-confusion", "race-condition" |
-| `validate_hypothesis(hypothesis)` | Cross-reference against known bugs | e.g., "integer overflow in length calculation before malloc" |
-| `analyze_code_pattern(pattern, code_context)` | Pattern matching | Paste suspect C/C++ code snippet |
+| `validate_hypothesis(hypothesis)` | Cross-reference against indexed findings | e.g., "integer overflow in length calculation before malloc" |
+| `analyze_code_pattern(pattern, code_context, protocol_type)` | BM25 pattern matching | Paste suspect C/C++ code snippet |
+| `get_similar_findings(pattern)` | Top-k BM25 row dicts | Severity calibration |
+| `get_knowledge_stats()` | Index readiness probe | Agent 1A startup probe |
 
-Relevant bug classes for C/C++ audits:
+**Unavailable under CSV** (return explicit `{error, fallback}`): `get_similar_exploit_code`, `get_fix_patterns`.
+
+Relevant bug classes for C/C++ audits (seed terms):
 - buffer-overflow, stack-buffer-overflow, heap-buffer-overflow
 - use-after-free, double-free, heap-use-after-free
 - integer-overflow, integer-underflow, signed-integer-overflow
@@ -161,7 +164,7 @@ Relevant bug classes for C/C++ audits:
 - memory-leak, resource-leak
 - crypto-misuse, weak-crypto, timing-side-channel
 
-Note: Solodit coverage of C/C++ vulnerabilities is more limited than Solidity. Supplement with:
+Note: the CSV has only 28 C/C++ rows. Supplement with:
 - WebSearch for CVE databases: `site:cve.mitre.org {library_name}` or NVD search
 - WebSearch for security advisories: `{library_name} security advisory`
 - CWE reference: `site:cwe.mitre.org CWE-{number}` for bug class details

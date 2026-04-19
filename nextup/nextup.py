@@ -206,15 +206,27 @@ def _box_row(w, bx: str, W: int, content: str, right: str = ""):
 
 
 def _probe_rag_db() -> int:
-    """Return the number of entries in the RAG vulnerability database, or -1 if not found."""
-    db_path = os.path.join(NEXTUP_HOME, "unified-vuln-db", "data", "chroma_db", "chroma.sqlite3")
-    if not os.path.isfile(db_path):
+    """Return the number of entries in the RAG vulnerability database, or -1 if not found.
+
+    v2.0.0-csv: reads data/csv_index/manifest.json from the MCP install.
+    """
+    manifest_path = os.path.join(
+        os.path.expanduser("~"),
+        ".nextup",
+        "custom-mcp",
+        "unified-vuln-db",
+        "data",
+        "csv_index",
+        "manifest.json",
+    )
+    if not os.path.isfile(manifest_path):
         return -1
     try:
-        conn = sqlite3.connect(db_path)
-        count = conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
-        conn.close()
-        return count
+        import json as _json
+        with open(manifest_path, "r") as f:
+            manifest = _json.load(f)
+        total = int(manifest.get("total_rows", 0))
+        return total if total > 0 else -1
     except Exception:
         return -1
 
@@ -730,38 +742,31 @@ def _rag_needs_build() -> bool:
 
 
 def _build_rag_db(w):
-    """Run the RAG indexer pipeline. Returns True on success."""
-    vuln_db_dir = os.path.join(NEXTUP_HOME, "custom-mcp", "unified-vuln-db")
+    """Build the CSV-backed RAG index from solodit_findings.dedup.csv. Returns True on success."""
+    vuln_db_dir = os.path.expanduser("~/.nextup/custom-mcp/unified-vuln-db")
     if not os.path.isdir(vuln_db_dir):
         w(f"  {_C_RED}unified-vuln-db not found at {vuln_db_dir}{_RST}\n")
         return False
 
+    csv_path = os.environ.get("NEXTUP_CSV_PATH") or os.path.join(
+        NEXTUP_HOME, "..", "solodit_findings.dedup.csv"
+    )
+    csv_path = os.path.abspath(csv_path)
+    if not os.path.isfile(csv_path):
+        w(f"  {_C_RED}CSV not found at {csv_path}{_RST}\n")
+        w(f"  {_C_GRAY}Set NEXTUP_CSV_PATH to override the default location{_RST}\n")
+        return False
+
     py = _python_bin()
+    cmd = f'cd "{vuln_db_dir}" && {py} -m unified_vuln.csv_index rebuild --csv "{csv_path}"'
 
-    # Check for Solodit API key — needed for the largest data source
-    if not os.environ.get("SOLODIT_API_KEY", "").strip():
-        w(f"  {_C_ORANGE}Note: SOLODIT_API_KEY not set — Solodit indexing will be skipped{_RST}\n")
-        w(f"  {_C_GRAY}Get a free key at https://solodit.cyfrin.io{_RST}\n")
-        w(f"  {_C_GRAY}Set it: export SOLODIT_API_KEY=your_key_here{_RST}\n\n")
-
-    steps = [
-        ("Solodit — live API",       "~2 min",
-         f'cd "{vuln_db_dir}" && {py} -m unified_vuln.indexer index -s solodit --max-pages 10'),
-        ("DeFiHackLabs — local",     "~1 min",
-         f'cd "{vuln_db_dir}" && {py} -m unified_vuln.indexer index -s defihacklabs'),
-        ("Immunefi — writeups",      "~30s",
-         f'cd "{vuln_db_dir}" && {py} -m unified_vuln.indexer index -s immunefi'),
-    ]
-
-    for label, est, cmd in steps:
-        w(f"  {_C_ORANGE}>{_RST} {_C_WHITE}{label}{_RST}"
-          f"  {_C_DARK_GRAY}{est}{_RST}\n")
-        sys.stdout.flush()
-        if not _run_install_cmd(cmd, retries=1):
-            w(f"  {_C_RED}  failed — continuing with partial data{_RST}\n")
-        else:
-            w(f"  {_C_GREEN}  done{_RST}\n")
-        w("\n")
+    w(f"  {_C_ORANGE}>{_RST} {_C_WHITE}Rebuilding CSV-backed index{_RST}"
+      f"  {_C_DARK_GRAY}~5s{_RST}\n")
+    sys.stdout.flush()
+    if not _run_install_cmd(cmd, retries=1):
+        w(f"  {_C_RED}  failed{_RST}\n\n")
+        return False
+    w(f"  {_C_GREEN}  done{_RST}\n\n")
 
     count = _probe_rag_db()
     if count > 0:
@@ -806,9 +811,10 @@ def _setup_python_deps(w):
         core_ok = False
 
     if core_ok:
-        # Quick-check: try importing a deep dep
+        # Verify the MCP module is importable. unified_vuln is CSV-backed and
+        # has no heavy runtime deps (no PyTorch, no embeddings, no ChromaDB).
         try:
-            import torch, chromadb  # noqa: F401
+            import unified_vuln  # noqa: F401
             deep_ok = True
         except ImportError:
             deep_ok = False
@@ -820,7 +826,7 @@ def _setup_python_deps(w):
         return True
 
     w(f"  {_C_ORANGE}>{_RST} {_C_WHITE}Installing Python dependencies...{_RST}"
-      f"  {_C_DARK_GRAY}~2-5 min (PyTorch is ~2GB){_RST}\n\n")
+      f"  {_C_DARK_GRAY}~30s{_RST}\n\n")
     sys.stdout.flush()
 
     # Build pip flags that work on PEP 668 systems (macOS Homebrew, Ubuntu 23.04+)

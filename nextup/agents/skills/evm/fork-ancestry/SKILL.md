@@ -34,31 +34,28 @@ Grep the codebase for known parent signatures:
 
 For each detected parent (confidence MEDIUM or HIGH):
 
-### 2a. Solodit Search (two queries, run in parallel)
+### 2a. Local CSV-backed Search (two queries, run in parallel)
 ```
-// Query 1: Known high-quality issues
-search_solodit_live(
-  protocol="{parent_name}",
-  impact=["HIGH", "CRITICAL"],
-  language="Solidity",
-  quality_score=3,
-  sort_by="Quality",
-  max_results=15
+// Query 1: Known issues mentioning the parent name in the summary
+mcp__unified-vuln-db__get_similar_findings(
+  pattern="{parent_name} vulnerability",
+  limit=15,
+  severity="high"
 )
-// Query 2: Rare/unusual patterns specific to fork divergences
-search_solodit_live(
-  keywords="{parent_name} fork modified divergence",
-  impact=["HIGH", "MEDIUM"],
-  language="Solidity",
-  sort_by="Rarity",
-  max_results=10
+// Query 2: Fork-divergence-style patterns
+mcp__unified-vuln-db__get_similar_findings(
+  pattern="{parent_name} fork modified divergence",
+  limit=10
 )
 ```
 
-### 2b. Tavily Search
+### 2b. Tavily / Web Search (primary source for parent-protocol history)
 ```
 tavily_search(query="{parent_name} smart contract vulnerability exploit audit finding 2024 2025 2026")
+// If tavily unavailable, fall back to WebSearch with the same query.
 ```
+
+Note: the local CSV has no `protocol_name` field, so parent-protocol matches are substring hits on the summary text. Expect thinner coverage than the prior live-Solodit path; always pair the local query with a web search for parent-protocol history.
 
 ### 2c. Known Issue Catalog
 

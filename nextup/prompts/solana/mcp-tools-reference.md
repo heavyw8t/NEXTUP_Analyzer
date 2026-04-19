@@ -50,20 +50,26 @@
 
 ### unified-vuln-db - Vulnerability Database
 
-> **Package**: Local SQLite + Solodit live search. No API key required.
+> **Package**: Local CSV-backed BM25 index. 19,370 MEDIUM + HIGH findings. No API key, no network calls. For Solana queries, use `filters={"protocol_types": ["Solana"]}` (432 Solana rows) — and optionally also `["Rust"]` (1,194 non-Solana Rust rows) if the finding may apply to shared Rust patterns.
 
 | Tool | What It Gives You | When to Use |
 |------|-------------------|-------------|
-| `mcp__unified-vuln-db__get_common_vulnerabilities(protocol_type)` | Common vulnerability patterns for a protocol category | TASK 0 - protocol classification |
-| `mcp__unified-vuln-db__get_attack_vectors(bug_class)` | Specific attack vectors for a vulnerability class | Understanding exploit mechanics |
-| `mcp__unified-vuln-db__search_solodit_live(keywords, tags, impact, language, quality_score, ...)` | Live search across Solodit finding database (50k+) | Cross-referencing with historical findings. Use `language="Rust"` for Solana, `quality_score=3` for good findings |
-| `mcp__unified-vuln-db__validate_hypothesis(hypothesis)` | Confidence score for a hypothesis based on historical data | Before verification - calibrate confidence |
-| `mcp__unified-vuln-db__get_similar_findings(description)` | Similar historical findings with severity info | Calibrate severity |
-| `mcp__unified-vuln-db__assess_hypothesis_strength(hypothesis)` | Strength assessment based on evidence | Chain analysis RAG validation |
-| `mcp__unified-vuln-db__analyze_code_pattern(pattern)` | Known vulnerability patterns matching a code structure | Depth agent pattern analysis |
-| `mcp__unified-vuln-db__get_root_cause_analysis(pattern)` | Root cause classification for a vulnerability pattern | Understanding underlying causes |
+| `mcp__unified-vuln-db__get_common_vulnerabilities(protocol_type)` | Tag/severity aggregation for a language or protocol_category | TASK 0 - protocol classification |
+| `mcp__unified-vuln-db__get_attack_vectors(bug_class)` | Similar findings clustered by attack mechanism | Understanding exploit mechanics |
+| `mcp__unified-vuln-db__validate_hypothesis(hypothesis)` | Confidence score based on local matches | Before verification - calibrate confidence |
+| `mcp__unified-vuln-db__get_similar_findings(pattern)` | Top-k BM25 row dicts from the CSV index | Calibrate severity, retrieve comparable cases |
+| `mcp__unified-vuln-db__assess_hypothesis_strength(hypothesis)` | Strength assessment + severity weighting | Chain analysis RAG validation |
+| `mcp__unified-vuln-db__analyze_code_pattern(pattern)` | BM25 matches with reasoning material | Depth agent pattern analysis |
+| `mcp__unified-vuln-db__get_root_cause_analysis(bug_class)` | Summary excerpts matching the bug class | Understanding underlying causes |
+| `mcp__unified-vuln-db__get_knowledge_stats()` | Index readiness probe | Agent 1A startup probe |
 
-**Solana-specific Solodit tags**: `Account Validation`, `CPI`, `PDA`, `Anchor`, `Solana`, `Token-2022`.
+**Unavailable under CSV** (return explicit `{error, fallback}`):
+- `mcp__unified-vuln-db__get_similar_exploit_code` — CSV has no PoC source code.
+- `mcp__unified-vuln-db__get_fix_patterns` — CSV has no recommendations or diff patches.
+
+When local results are thin (< 5 hits), expand via `mcp__tavily-search__tavily_search` or `WebSearch`.
+
+**Solana-specific tags available via `filters.tag` substring**: `Account Validation`, `CPI`, `PDA`, `Anchor`, `Solana`, `Token-2022`.
 
 ### tavily-search - Web Research
 

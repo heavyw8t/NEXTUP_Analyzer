@@ -466,14 +466,14 @@ Replace placeholders: `{path}`, `{scratchpad}`, `{docs_path_or_url_if_provided}`
 | **2 (Build + Slither)** | foreground | sonnet | YES |
 | **3 (Patterns + Surface)** | foreground | opus (Core/Thorough) or sonnet (Light) | YES |
 
-Agent 1A runs inline alongside the others (local ChromaDB queries are fast). If the unified-vuln-db MCP is not installed or the index is empty, Agent 1A's probe fails, it writes a minimal `meta_buffer.md`, and returns; Phase 4b.5 RAG Sweep compensates later with the WebSearch fallback.
+Agent 1A runs inline alongside the others (local CSV-backed queries are in-process). If the unified-vuln-db MCP is not installed or the index is empty, Agent 1A's probe fails, it writes a minimal `meta_buffer.md`, and returns; Phase 4b.5 RAG Sweep compensates later with the WebSearch fallback.
 
 **Light mode override**: Spawn only 2 merged agents (both sonnet, both foreground). Skip RAG (Agent 1A) and fork ancestry entirely per Light Mode Orchestration override #2.
 
 ### After All 4 Agents Return
 1. Verify artifacts exist: `ls {scratchpad}/`
 2. Read: `recon_summary.md`, `template_recommendations.md`, `attack_surface.md`
-3. **RAG resilience check**: If `meta_buffer.md` is missing or empty (Agent 1A's probe failed because the unified-vuln-db MCP is not installed or the local ChromaDB index is empty), proceed with empty meta_buffer.md. Phase 4b.5 RAG Validation Sweep runs after depth analysis and uses WebSearch fallback when the local index is unavailable.
+3. **RAG resilience check**: If `meta_buffer.md` is missing or empty (Agent 1A's probe failed because the unified-vuln-db MCP is not installed or the local CSV index manifest is missing), proceed with empty meta_buffer.md. Phase 4b.5 RAG Validation Sweep runs after depth analysis and uses WebSearch fallback when the local index is unavailable.
 4. **Hard gate**: ALL artifacts must exist before Phase 2
 
 ---

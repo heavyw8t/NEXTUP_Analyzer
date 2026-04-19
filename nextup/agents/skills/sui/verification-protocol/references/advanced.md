@@ -30,16 +30,12 @@ mcp__unified-vuln-db__validate_hypothesis(hypothesis="{your finding summary}")
 ```
 Returns supporting/contradicting evidence from historical exploits.
 
-### Step 5: Live Search for Sui-Specific Precedents
+### Step 5: Web Search for Sui-Specific Precedents
 ```
-mcp__unified-vuln-db__search_solodit_live(
-  keywords="{sui move vulnerability pattern}",
-  impact=["HIGH", "CRITICAL"],
-  tags=["Access Control", "Logic Error"],
-  language="Move",
-  quality_score=3,
-  max_results=15
-)
+// The local CSV has only 128 Move rows. For Sui-specific precedents,
+// prefer web search over another local BM25 call.
+mcp__tavily-search__tavily_search(query="sui move {vulnerability pattern} audit finding vulnerability exploit")
+// If tavily unavailable, fall back to WebSearch with the same query.
 ```
 
 ### RAG Integration Rules

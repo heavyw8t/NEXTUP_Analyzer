@@ -170,7 +170,7 @@ For findings marked REFUTED in your domain:
 ## RAG Validation (MANDATORY)
 For each NEW finding or combination discovered, call:
 - validate_hypothesis(hypothesis='<finding description>')
-- If local results < 5: search_solodit_live(keywords='<pattern>', tags=['Aptos','Move'], language='Move', quality_score=3, max_results=20)
+- If local results < 5: fall back to `mcp__tavily-search__tavily_search` or WebSearch
 
 ## MCP Tool References
 - If `build_status.md` shows `PROVER_AVAILABLE = true`: Note prover results from static_analysis.md
@@ -233,7 +233,7 @@ For EACH question:
 3. If you find a defense mechanism (cap, bound, min/max, guard): trace each INPUT to the defense - can any input be externally manipulated to weaken it?
 4. Make your OWN MCP tool calls:
    - validate_hypothesis() for RAG validation
-   - search_solodit_live() if local results < 5
+   - WebSearch / tavily_search if local results < 5
 
 ## Output
 Write to {SCRATCHPAD}/depth_{type}_injectable_findings.md:

@@ -7,16 +7,16 @@
 >
 > | Agent | Tasks | Model | Why Separate |
 > |-------|-------|-------|-------------|
-> | **1A: RAG-only** | TASK 0 steps 1-5 (local vuln-db) | sonnet | Mechanical query+format task against local ChromaDB index |
+> | **1A: RAG-only** | TASK 0 steps 1-5 (local vuln-db) | sonnet | Mechanical query+format task against local CSV-backed BM25 index |
 > | **1B: Docs + External + Fork** | TASK 0 step 6 (fork ancestry), TASK 3, TASK 11 | opus | Trust model inference requires reasoning |
 > | **2: Build + Static + Tests** | TASK 1, 2, 8, 9 | sonnet | Tool execution+output formatting - no deep reasoning needed |
 > | **3: Patterns + Surface + Templates** | TASK 4, 5, 6, 7, 10 | opus | Attack surface + template selection requires reasoning |
 >
 >
-> **RAG POLICY (v1.1.0)**:
-> Agent 1A is a normal inline agent. The orchestrator spawns it alongside Agents 1B, 2, and 3 and awaits all four. Local ChromaDB queries are fast, so there is no need to run 1A in the background.
-> - If Agent 1A's probe call to `mcp__unified-vuln-db__get_knowledge_stats` fails (MCP not installed, ChromaDB empty, schema mismatch), Agent 1A sets `RAG_TOOLS_AVAILABLE=false`, writes a minimal `meta_buffer.md` with `# Meta-Buffer\n## RAG: UNAVAILABLE - MCP probe failed\nPhase 4b.5 RAG Validation Sweep will compensate via WebSearch fallback.`, and returns.
-> - Live Solodit API is disabled by default; the MCP only exposes `search_solodit_live` when started with `ENABLE_LIVE_SOLODIT=1`. All queries here use the local `mcp__unified-vuln-db__search` tool.
+> **RAG POLICY (v2.0.0-csv)**:
+> Agent 1A is a normal inline agent. The orchestrator spawns it alongside Agents 1B, 2, and 3 and awaits all four. Local CSV-backed queries are in-process (no embedding model, no network), so there is no need to run 1A in the background.
+> - If Agent 1A's probe call to `mcp__unified-vuln-db__get_knowledge_stats` fails (MCP not installed, CSV index manifest missing, schema mismatch), Agent 1A sets `RAG_TOOLS_AVAILABLE=false`, writes a minimal `meta_buffer.md` with `# Meta-Buffer\n## RAG: UNAVAILABLE - MCP probe failed\nPhase 4b.5 RAG Validation Sweep will compensate via WebSearch fallback.`, and returns.
+> - The MCP serves only the local CSV-backed index (19,370 MEDIUM + HIGH findings, 12 language shards). There is no live Solodit fallback; when local results are thin, use `WebSearch` / `mcp__tavily-search__tavily_search`.
 >
 > Agent 1A writes: `meta_buffer.md`
 > Agent 1B writes: `design_context.md`, `external_production_behavior.md`, fork section of `meta_buffer.md`
@@ -73,11 +73,11 @@ Scan .move source files (exclude build/, tests/) to determine type:
 2. mcp__unified-vuln-db__get_attack_vectors(bug_class='{relevant pattern}')
 3. mcp__unified-vuln-db__get_root_cause_analysis(bug_class='{detected pattern}')
 
-**Batch 2** (single message, all in parallel, local ChromaDB search):
-4. **MANDATORY**: mcp__unified-vuln-db__search(query='Sui Move {DeFi/Bridge/etc.} {relevant tags} quality findings', n_results=20, filters={"sources": ["solodit"], "protocol_types": ["sui"]})
-5. If SEMI_TRUSTED_ROLE detected: mcp__unified-vuln-db__search(query='reward compound timing front-run keeper operator admin capability', n_results=15, filters={"sources": ["solodit"], "protocol_types": ["sui"], "severities": ["high", "medium"]})
-6. mcp__unified-vuln-db__search(query='Move Sui object ownership PTB shared type safety', n_results=15, filters={"sources": ["solodit"], "protocol_types": ["sui"], "severities": ["high", "critical"]})
-7. mcp__unified-vuln-db__search(query='Move ability constraint copy drop store key hot potato', n_results=10, filters={"sources": ["solodit"], "protocol_types": ["sui"], "severities": ["high", "medium"]})
+**Batch 2** (single message, all in parallel, local CSV-backed BM25):
+4. **MANDATORY**: mcp__unified-vuln-db__get_similar_findings(pattern='Sui Move {DeFi/Bridge/etc.} {relevant tags} quality findings', limit=20)
+5. If SEMI_TRUSTED_ROLE detected: mcp__unified-vuln-db__get_similar_findings(pattern='reward compound timing front-run keeper operator admin capability', limit=15, severity='high')
+6. mcp__unified-vuln-db__get_similar_findings(pattern='Move Sui object ownership PTB shared type safety', limit=15, severity='high')
+7. mcp__unified-vuln-db__get_similar_findings(pattern='Move ability constraint copy drop store key hot potato', limit=10, severity='high')
 
 ### Step 3: Synthesize into {SCRATCHPAD}/meta_buffer.md
 ```markdown
@@ -786,7 +786,7 @@ Return: 'DONE: {N} modules inventoried ({L} lines), {M} patterns detected, {K} t
    - `build_status.md`, `function_list.md`, `call_graph.md`, `state_variables.md`, `modifiers.md`, `event_definitions.md`, `external_interfaces.md`, `static_analysis.md`, `test_results.md` (2)
    - `contract_inventory.md`, `attack_surface.md`, `detected_patterns.md`, `setter_list.md`, `emit_list.md`, `constraint_variables.md`, `template_recommendations.md` (3)
 
-2. **RAG resilience check**: If `meta_buffer.md` is missing or empty (Agent 1A's probe failed because the unified-vuln-db MCP is not installed or the local ChromaDB index is empty):
+2. **RAG resilience check**: If `meta_buffer.md` is missing or empty (Agent 1A's probe failed because the unified-vuln-db MCP is not installed or the local CSV-backed BM25 index is empty):
    - Proceed with empty meta_buffer.md. Phase 4b.5 RAG Validation Sweep runs after depth analysis and uses WebSearch fallback when the local index is unavailable.
 
 3. **Read summary artifacts**: template_recommendations.md (BINDING MANIFEST), attack_surface.md, detected_patterns.md

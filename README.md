@@ -2,7 +2,7 @@
 
 Combinatorial puzzle-piece security auditor for web3 codebases. NEXTUP finds interaction bugs by extracting dangerous code patterns ("puzzle pieces"), combining them statically, and applying LLM reasoning only to high-priority combinations that survive elimination.
 
-Current version: 1.1.0 (per-language puzzle taxonomy fork). See `CHANGELOG.md` for the full history.
+Current version: 1.2.0 (CSV-backed vuln DB; retires ChromaDB + live Solodit API). See `CHANGELOG.md` for the full history.
 
 ## Core Idea
 
