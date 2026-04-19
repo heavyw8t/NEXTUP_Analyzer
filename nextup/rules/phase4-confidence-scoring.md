@@ -167,25 +167,25 @@ You are the RAG Validation Sweep Agent.
 ## Your Task
 For EVERY finding in {SCRATCHPAD}/findings_inventory.md:
 1. Call validate_hypothesis(hypothesis='{finding title}: {1-line root cause}')
-2. Call search_solodit_live(keywords='{vulnerability class}', max_results=10)
+2. Call mcp__unified-vuln-db__search(query='{vulnerability class}', n_results=10, filters={"sources": ["solodit"]}) against the local ChromaDB index
 3. Record the result
 
 If a tool call fails, record [RAG: TOOL_ERROR] for that finding - do NOT silently skip.
 
-## Fallback Chain (if MCP tools fail)
-If validate_hypothesis or search_solodit_live fails (API error, schema error, timeout):
+## Fallback Chain (if local MCP unavailable or index empty)
+The unified-vuln-db MCP is local-only by default (live Solodit API is gated behind ENABLE_LIVE_SOLODIT=1 on the MCP server). If the local tools fail or the ChromaDB index returns nothing useful, walk this chain:
 1. Try get_similar_findings(pattern='{finding description}')
 2. If that also fails: try get_common_vulnerabilities(category='{vulnerability class}')
-3. If ALL MCP tools fail: use WebSearch fallback - search 'site:solodit.xyz {vulnerability class} {key term}' for each finding and extract match count + relevance
+3. If ALL local MCP tools fail or the index is empty: use WebSearch fallback, search 'site:solodit.xyz {vulnerability class} {key term}' for each finding and extract match count + relevance
 4. If WebSearch also fails: record [RAG: ALL_TOOLS_FAILED] and score = 0.3
 
-**IMPORTANT**: If the FIRST MCP call fails with a schema/API error, assume ALL MCP calls will fail. Switch immediately to WebSearch fallback for remaining findings instead of retrying each one. This prevents N×timeout delays.
+**IMPORTANT**: If the FIRST MCP call fails with a schema/API error or the index is missing, assume ALL MCP calls will fail. Switch immediately to WebSearch fallback for remaining findings instead of retrying each one. This prevents N cache misses on a cold ChromaDB.
 
 **IMPORTANT**: If MCP tools SUCCEED but return 0 supporting examples AND 0 solodit matches for the first 3 findings, treat this as 'empty database' and run WebSearch as a COMPLEMENT for all remaining findings (search '{vulnerability class} {protocol type} audit' and 'site:solodit.xyz {key term}'). MCP success with empty results is functionally equivalent to MCP failure for novel protocols.
 
 ## Output
 Write to {SCRATCHPAD}/rag_validation.md:
-| Finding ID | validate_hypothesis Score | solodit_live Matches | Final RAG Score | Notes |
+| Finding ID | validate_hypothesis Score | Local Search Matches | Final RAG Score | Notes |
 
 Return: 'DONE: {N} findings validated, {E} tool errors, fallback={MCP|WEB|NONE}'
 ")
@@ -213,7 +213,7 @@ The scoring agent reads `rag_validation.md` for Axis 4 instead of checking indiv
 | `confidence_distribution.md` | Orchestrator (after scoring) | CONFIDENT/UNCERTAIN/LOW counts + exit condition check |
 | `adaptive_loop_log.md` | Orchestrator (after loop exits) | Iteration count, spawns used, exit condition triggered, per-iteration summary |
 | `verification_error_traces.md` | Orchestrator (after Phase 5) | Error traces from failed PoCs, formatted as investigation questions for post-verification depth |
-| `rag_validation.md` | RAG Validation Sweep Agent (Phase 4b.5) | Per-finding RAG scores from validate_hypothesis + search_solodit_live |
+| `rag_validation.md` | RAG Validation Sweep Agent (Phase 4b.5) | Per-finding RAG scores from validate_hypothesis + local unified-vuln-db search |
 | `design_stress_findings.md` | Design Stress Testing Agent | Design limit, adequacy, and constraint coherence findings |
 | `composition_coverage.md` | Chain Analysis Agent | Finding-pair composition coverage map (explored/unexplored) |
 | `violations.md` | Orchestrator (on skip) | Thorough mode workflow violations - skipped mandatory steps (Rule 12) |

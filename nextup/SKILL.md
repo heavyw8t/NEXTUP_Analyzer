@@ -31,11 +31,12 @@ The primer controls **format and prose** only. A finding that does not fit the p
 ### R5 — Mid-pipeline self-correction is mandatory
 If you notice mid-pipeline that a non-negotiable rule was skipped, stop forward progress, ask the user for the missing input, then continue. Do not "fix forward" by guessing.
 
-### R6 — Maintain a local CHANGELOG after every change to the nextup folder
-Every rework, bugfix, or feature change inside `~/Desktop/NEXTUP SKILL/nextup/` MUST be appended to `~/Desktop/NEXTUP SKILL/CHANGELOG.md` before the session ends. Entry format: `## YYYY-MM-DD — <short title>` followed by a bullet list of what changed and why. `CHANGELOG.md` is git-ignored (personal log, never pushed). Do not skip this because a change feels small; grep-ability of the history matters more than tidiness.
+### R6 — Append a CHANGELOG entry as step 0 of every commit that touches nextup/
+Every commit that includes any path under `~/Desktop/NEXTUP SKILL/nextup/` MUST be preceded by an appended entry to `~/Desktop/NEXTUP SKILL/CHANGELOG.md`. This is step 0 of R7 below, not a separate "before session ends" obligation. Entry format: `## YYYY-MM-DD — <short title>` followed by a bullet list of what changed and why. `CHANGELOG.md` is git-ignored (personal log, never pushed). Do not skip this because a change feels small; grep-ability of the history matters more than tidiness. If you are about to run `git commit` and have not appended an entry, stop and append first.
 
 ### R7 — Commit and sync the nextup folder after every rework
 After any change to files under `~/Desktop/NEXTUP SKILL/nextup/` (rules, prompts, primers, scripts, agents), the workflow is:
+0. Append a dated entry to `~/Desktop/NEXTUP SKILL/CHANGELOG.md` describing what changed and why (see R6). Verify the entry is present before proceeding.
 1. `git pull --rebase` (pick up any remote changes first)
 2. `git add` the nextup/ paths you touched (never `git add -A` — avoid sweeping up `CHANGELOG.md` or stray repos)
 3. `git commit` with a message describing the rework

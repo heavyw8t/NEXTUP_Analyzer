@@ -1,5 +1,5 @@
 {
-  "min_categories": 2,
+  "min_categories": 1,
   "require_shared_contract_or_call": true,
   "require_interaction_link": true,
   "eliminate_actor_conflict": true,
@@ -14,7 +14,6 @@
     "eliminate_template_only_no_instantiation",
     "eliminate_pure_compute_no_io",
     "eliminate_same_tu_static_no_bridge",
-    "split_verify_tsan_asan_incompatible",
-    "eliminate_already_patched_cve_region"
+    "split_verify_tsan_asan_incompatible"
   ]
 }

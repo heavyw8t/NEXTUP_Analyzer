@@ -104,28 +104,6 @@ def extra_eliminate(combo):
         if guarded and not guard_collision:
             return False
 
-    # EVM-R6: sub-wei rounding without amplifier (C01/C02 loop).
-    if suffixes & ROUNDING_TYPES and not (suffixes & {"C01", "C02"}):
-        if all(
-            "sub-wei" in (p.get("description", "") or "").lower()
-            or "dust" in (p.get("description", "") or "").lower()
-            for p in combo if _piece_type_suffix(p) in ROUNDING_TYPES
-        ):
-            # only drop when evidence suggests sub-wei delta and no amplifier
-            return False
-
-    # EVM-R7: unprofitable flash.
-    if FLASH_BORROWER_ACTOR in actors:
-        profit_trace = any(
-            "profit" in (p.get("description", "") or "").lower()
-            or "gain" in (p.get("description", "") or "").lower()
-            for p in combo
-        )
-        if not profit_trace:
-            # keep only if there's a reserve-price or oracle manipulation piece
-            if not (suffixes & {RESERVE_PRICE_TYPE, ORACLE_PRICE_TYPE}):
-                return False
-
     # EVM-R8: authenticated cross-chain combo.
     if CROSS_CHAIN_ACTOR in actors:
         has_auth = any(

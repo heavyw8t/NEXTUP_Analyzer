@@ -30,6 +30,20 @@ This skill analyzes security of the **hook implementation itself** — the proto
 
 ---
 
+## 0. Taxonomy Pre-Search (MANDATORY first step)
+
+Before any code analysis, query the NEXTUP taxonomy for finding types that overlap this skill's domain:
+
+1. Read `{NEXTUP_HOME}/taxonomy/evm.json`.
+2. Grep the `types[].markers` arrays for keywords tied to this integration. For this skill, the relevant marker seed list is: `hooks`, `afterSwap`, `beforeSwap`, `poolKey`, `poolManager`, `PoolId`, `hookData`, `beforeAddLiquidity`
+3. For every match, record the taxonomy `id` (e.g. `EVM-D03`), `name`, `category`, `typical_direction`, and which markers matched.
+4. When a finding produced by this skill maps to a taxonomy type, tag it with both IDs: `[V4H-N] (taxonomy: <ID> <NAME>)`.
+5. Any taxonomy marker that appears in scope code but produces no finding must be affirmatively dismissed with a one-line reason in your output.
+
+If `taxonomy/evm.json` is missing or unreadable, log to `{SCRATCHPAD}/trace_issues.md` when `TRACE_MODE == true` and continue with marker-free analysis.
+
+---
+
 ## 1. Pool Identity and Caller Authentication
 
 Uniswap V4 allows multiple pools for the same token pair (different fee tiers, tick spacings, or configurations). All pools sharing the same hook contract will invoke the hook's callbacks. The hook MUST validate which pool is calling.

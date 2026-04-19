@@ -154,19 +154,6 @@ def extra_eliminate(combo) -> bool:
     if all_immutable and "L" not in cats:
         return False
 
-    # SUI-R2: PTB atomicity. Combos whose narrative invents a partial-rollback
-    # assumption WITHOUT including SUI-K03 (the piece that captures that
-    # misconception) are dropped. Heuristic: description/snippet contains
-    # partial-commit language across pieces but no K03 piece is present.
-    if "K03" not in suffixes:
-        partial_tokens = ("partial commit", "partial rollback", "step 2 fails", "step 1 persists")
-        hit = any(
-            any(tok in p.get("description", "").lower() or tok in p.get("snippet", "").lower() for tok in partial_tokens)
-            for p in combo
-        )
-        if hit:
-            return False
-
     # SUI-R3: Owned-object cross-sender. Combo requires two different senders
     # to both hold the same owned object without an intermediate transfer.
     actors = {p.get("actor", "") for p in combo}

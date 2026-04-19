@@ -1,5 +1,5 @@
 {
-  "min_categories": 2,
+  "min_categories": 1,
   "require_shared_contract_or_call": true,
   "require_interaction_link": true,
   "eliminate_actor_conflict": true,
@@ -11,7 +11,6 @@
   "eliminate_all_neutral_same_context": true,
   "custom_rules": [
     "eliminate_immutable_only_combos",
-    "eliminate_partial_ptb_rollback_assumption",
     "eliminate_owned_object_cross_sender",
     "eliminate_upgradecap_immutable",
     "eliminate_cap_gated_no_access_contradiction",

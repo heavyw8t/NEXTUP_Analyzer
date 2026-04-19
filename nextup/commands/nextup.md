@@ -461,25 +461,19 @@ Replace placeholders: `{path}`, `{scratchpad}`, `{docs_path_or_url_if_provided}`
 
 | Agent | Spawn | Model | Await? |
 |-------|-------|-------|--------|
-| **1A (RAG)** | `run_in_background: true` | sonnet | **NO** — fire-and-forget |
+| **1A (RAG)** | foreground | sonnet | YES |
 | **1B (Docs + External)** | foreground | opus (Core/Thorough) or sonnet (Light) | YES |
 | **2 (Build + Slither)** | foreground | sonnet | YES |
 | **3 (Patterns + Surface)** | foreground | opus (Core/Thorough) or sonnet (Light) | YES |
 
-**Agent 1A is FIRE-AND-FORGET**: spawn in background, never block on it. If it hasn't returned when 1B/2/3 finish, write fallback `meta_buffer.md` and proceed.
+Agent 1A runs inline alongside the others (local ChromaDB queries are fast). If the unified-vuln-db MCP is not installed or the index is empty, Agent 1A's probe fails, it writes a minimal `meta_buffer.md`, and returns; Phase 4b.5 RAG Sweep compensates later with the WebSearch fallback.
 
 **Light mode override**: Spawn only 2 merged agents (both sonnet, both foreground). Skip RAG (Agent 1A) and fork ancestry entirely per Light Mode Orchestration override #2.
 
-### After Agents 1B, 2, 3 Return
+### After All 4 Agents Return
 1. Verify artifacts exist: `ls {scratchpad}/`
 2. Read: `recon_summary.md`, `template_recommendations.md`, `attack_surface.md`
-3. **RAG resilience check**: If `meta_buffer.md` does not exist or is empty (Agent 1A still running or failed):
-   - Spawn lightweight RAG-retry agent (haiku, <2 min, 3 queries only):
-     1. get_common_vulnerabilities(protocol_type)
-     2. get_attack_vectors(primary_pattern)
-     3. search_solodit_live(protocol_category=[category], quality_score=3, max_results=10)
-   - Write results to meta_buffer.md
-   - If retry also fails: proceed with empty meta_buffer.md
+3. **RAG resilience check**: If `meta_buffer.md` is missing or empty (Agent 1A's probe failed because the unified-vuln-db MCP is not installed or the local ChromaDB index is empty), proceed with empty meta_buffer.md. Phase 4b.5 RAG Validation Sweep runs after depth analysis and uses WebSearch fallback when the local index is unavailable.
 4. **Hard gate**: ALL artifacts must exist before Phase 2
 
 ---

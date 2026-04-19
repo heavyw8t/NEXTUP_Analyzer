@@ -18,6 +18,7 @@ description: "NEXTUP - Combinatorial puzzle-piece security auditor. Usage: /next
 - If it contains `scope:` followed by a file path, set `SCOPE_FILE` to that path. The file should list in-scope contracts/files.
 - If it contains `notes:` followed by text (up to end of arguments or next known prefix), set `SCOPE_NOTES` to that text. Passed to recon as additional audit context (e.g., "focus on vault module, ignore governance").
 - If it contains `proven-only:` followed by `true` (or just `proven-only: true`), set `PROVEN_ONLY = true`. When enabled, findings whose best evidence is `[CODE-TRACE]` (no executed PoC or fuzzer counterexample) are capped at Low severity in the report. Default: false.
+- If it contains `trace:` followed by `true` or `false` (or just `trace: true`), set `TRACE_MODE` accordingly. When `true`, a single post-hoc trace-reconstructor agent runs after Phase 6 and writes `{PROJECT_ROOT}/AUDIT_TRACE.md`. Default: false. When unset AND no `wrapper-launch`, the wizard asks at Step 0a.3.
 - If it contains `wrapper-launch`, set `LAUNCHED_FROM_WRAPPER = true`. The user already confirmed the launch in the terminal wrapper — skip Step 0d (cost estimate + confirmation) entirely and jump directly to Step 1 (language detection). Do NOT show a second confirmation prompt.
 - If MODE, PROJECT_PATH, DOCS_PATH (or nodocs), AND `proven-only:` are all resolved AND `wrapper-launch` is present, skip the ENTIRE wizard — jump directly to Step 1 (language detection). No cost estimate, no confirmation.
 - If MODE, PROJECT_PATH, DOCS_PATH (or nodocs), AND `proven-only:` are all resolved but NO `wrapper-launch`, skip the wizard — jump to "Step 0d: Cost Estimate + Launch Confirmation".
@@ -138,6 +139,38 @@ Map selection to `NEXTUP_MODE`:
 - "Lightweight" → `lightweight`
 - "Middleweight (Recommended)" → `middleweight`
 - "Heavyw8t" → `heavyw8t`
+
+### Step 0a.3: Trace Mode (optional)
+
+If `TRACE_MODE` was already set from args (see Step 0 parser), skip this step. Otherwise ask:
+
+```
+AskUserQuestion(questions=[{
+  question: "Enable trace mode? Records where each finding originated, how it evolved, and why it was kept or eliminated. Writes AUDIT_TRACE.md next to the report.",
+  header: "Trace",
+  multiSelect: false,
+  options: [
+    {
+      label: "No, skip tracing (Recommended)",
+      description: "Default. Standard audit. Zero extra agents, zero extra tokens."
+    },
+    {
+      label: "Yes, enable trace mode",
+      description: "After the report is assembled, one extra haiku agent reconstructs the full finding lifecycle from scratchpad files and writes AUDIT_TRACE.md. No impact on the rest of the pipeline."
+    }
+  ]
+}])
+```
+
+Set `TRACE_MODE = true` only if the user selects "Yes". Default is `false`. When `TRACE_MODE == false`, the pipeline runs exactly as it does today: no trace files, no extra agents, no prompt modifications, and `{NEXTUP_HOME}/rules/trace-mode.md` is never read.
+
+### Trace Mode Orchestrator Rule (only if TRACE_MODE == true)
+
+If `TRACE_MODE == true`, the orchestrator MUST, for the rest of this audit, append the `## Trace Mode: Error Surfacing` suffix block defined in `{NEXTUP_HOME}/rules/trace-mode.md` (section "Agent Error Surfacing Directive") to the END of every `Task(...)` prompt it spawns. This includes recon agents, breadth agents, inventory, semantic-invariant agents, depth agents, scanner agents, NEXTUP seeder/combinator agents, chain agents, verifiers, escalation verifiers, skeptic-judge, report tier writers, and the assembler. Substitute `{SCRATCHPAD}` with the run's scratchpad path before appending.
+
+Effect: every agent learns to log non-fatal issues to `{SCRATCHPAD}/trace_issues.md` and continue rather than fail silently. The Phase 6d trace reconstructor ingests that file and surfaces its contents at the top of `AUDIT_TRACE.md`.
+
+If `TRACE_MODE == false`, do NOT append anything to any agent prompt. Do NOT read `rules/trace-mode.md`. Agent behavior is unchanged from the non-trace baseline.
 
 ### Step 0b: Target Project
 
@@ -455,25 +488,19 @@ Replace placeholders: `{path}`, `{scratchpad}`, `{docs_path_or_url_if_provided}`
 
 | Agent | Spawn | Model | Await? |
 |-------|-------|-------|--------|
-| **1A (RAG)** | `run_in_background: true` | sonnet | **NO** — fire-and-forget |
+| **1A (RAG)** | foreground | sonnet | YES |
 | **1B (Docs + External)** | foreground | opus (Core/Thorough) or sonnet (Light) | YES |
 | **2 (Build + Slither)** | foreground | sonnet | YES |
 | **3 (Patterns + Surface)** | foreground | opus (Core/Thorough) or sonnet (Light) | YES |
 
-**Agent 1A is FIRE-AND-FORGET**: spawn in background, never block on it. If it hasn't returned when 1B/2/3 finish, write fallback `meta_buffer.md` and proceed.
+Agent 1A runs inline alongside the others (local ChromaDB queries are fast). If the unified-vuln-db MCP is not installed or the index is empty, Agent 1A's probe fails, it writes a minimal `meta_buffer.md`, and returns; Phase 4b.5 RAG Sweep compensates later with the WebSearch fallback.
 
 **Light mode override**: Spawn only 2 merged agents (both sonnet, both foreground). Skip RAG (Agent 1A) and fork ancestry entirely per Light Mode Orchestration override #2.
 
-### After Agents 1B, 2, 3 Return
+### After All 4 Agents Return
 1. Verify artifacts exist: `ls {scratchpad}/`
 2. Read: `recon_summary.md`, `template_recommendations.md`, `attack_surface.md`
-3. **RAG resilience check**: If `meta_buffer.md` does not exist or is empty (Agent 1A still running or failed):
-   - Spawn lightweight RAG-retry agent (haiku, <2 min, 3 queries only):
-     1. get_common_vulnerabilities(protocol_type)
-     2. get_attack_vectors(primary_pattern)
-     3. search_solodit_live(protocol_category=[category], quality_score=3, max_results=10)
-   - Write results to meta_buffer.md
-   - If retry also fails: proceed with empty meta_buffer.md
+3. **RAG resilience check**: If `meta_buffer.md` is missing or empty (Agent 1A's probe failed because the unified-vuln-db MCP is not installed or the local ChromaDB index is empty), proceed with empty meta_buffer.md. Phase 4b.5 RAG Validation Sweep runs after depth analysis and uses WebSearch fallback when the local index is unavailable.
 4. **Hard gate**: ALL artifacts must exist before Phase 2
 
 ---
@@ -972,6 +999,22 @@ After ALL verifiers complete:
 > **Light mode override**: Do NOT read `{NEXTUP_HOME}/rules/phase6-report-prompts.md`. Instead, spawn 2 agents: (1) a single sonnet writer handling ID assignment, root-cause consolidation, and all severity tiers inline; (2) a haiku assembler that merges the writer output with the report header template. No separate index agent or tier-split writers. Include the Light mode disclaimer per override #9.
 
 > **Core/Thorough**: Read `{NEXTUP_HOME}/rules/phase6-report-prompts.md` and follow the full 5-agent pipeline (Index → 3 Tier Writers → Assembler).
+
+### Phase 6d: Trace Reconstruction (only if TRACE_MODE == true)
+
+After the Assembler returns and `{PROJECT_ROOT}/AUDIT_REPORT.md` is written, check `TRACE_MODE`:
+
+- If `TRACE_MODE == false` or unset: skip this entire phase. Do NOT read `{NEXTUP_HOME}/rules/trace-mode.md`. Proceed to pipeline completion as normal.
+- If `TRACE_MODE == true`: spawn exactly one agent to reconstruct the trace. Pass the agent the path `{NEXTUP_HOME}/rules/trace-mode.md` along with `{SCRATCHPAD}` and `{PROJECT_ROOT}`. The agent reads existing scratchpad provenance files, writes `{PROJECT_ROOT}/AUDIT_TRACE.md`, and returns a one-line summary. The orchestrator then prints to the user:
+
+```
+Audit complete.
+  Report: {PROJECT_ROOT}/AUDIT_REPORT.md
+  Trace:  {PROJECT_ROOT}/AUDIT_TRACE.md
+  {summary line returned by the trace agent}
+```
+
+Do not alter any other phase, agent prompt, or scratchpad contract as a result of this step. Trace reconstruction is purely additive and post-hoc.
 
 ---
 

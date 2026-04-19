@@ -191,16 +191,6 @@ def extra_eliminate(combo) -> bool:
         # Keep, but the verification phase will split-verify.
         pass
 
-    # CPP-R6: already-patched pruning is fork-ancestry-driven. The combinator
-    # has no access to fork-ancestry results here; recon / phase-4b consumes
-    # that signal. Stub: if any piece has a "patched_cve" marker in its
-    # state_touched list (authoring convention), drop the combo.
-    if any(
-        any(isinstance(s, str) and s.startswith("patched_cve:") for s in (p.get("state_touched") or []))
-        for p in combo
-    ):
-        return False
-
     return True
 
 

@@ -7,26 +7,22 @@
 >
 > | Agent | Model | Tasks | Why Separate |
 > |-------|-------|-------|-------------|
-> | **1A: RAG-only** | sonnet | TASK 0 steps 1-5 (vuln-db + Solodit) | Mechanical query + format - no deep reasoning needed |
+> | **1A: RAG-only** | sonnet | TASK 0 steps 1-5 (local vuln-db) | Mechanical query+format task against local ChromaDB index |
 > | **1B: Docs + External + Fork** | opus | TASK 0 step 6 (fork ancestry), TASK 3, TASK 11 | Tavily/Helius can hang; fork ancestry needs reasoning |
 > | **2: Build + Static + Tests** | sonnet | TASK 1, 2, 8, 9 | Tool execution + output formatting - no deep reasoning needed |
 > | **3: Patterns + Surface + Templates** | opus | TASK 4, 5, 6, 7, 10 | Pure codebase analysis, fast; pattern detection needs reasoning |
 >
 >
-> **CRITICAL - RAG TIMEOUT POLICY (v9.9.6)**:
-> Agent 1A is **FIRE-AND-FORGET**. The orchestrator MUST NOT block on Agent 1A completion.
-> - Spawn Agent 1A with `run_in_background: true`
-> - **DO NOT await Agent 1A** before proceeding to Phase 2. Wait ONLY for Agents 1B, 2, and 3.
-> - After Agents 1B/2/3 complete, check Agent 1A status:
->   - If complete → read its `meta_buffer.md` output
->   - If still running → **ABANDON IT**. Write a minimal empty `meta_buffer.md` with `# Meta-Buffer\n## RAG: UNAVAILABLE - agent timed out\nPhase 4b.5 RAG Validation Sweep will compensate.`
-> - **Rationale**: RAG MCP calls (unified-vuln-db, Solodit) can hang indefinitely (observed: 100+ minutes with 0 output). The pipeline's real RAG safety net is Phase 4b.5 (RAG Validation Sweep), which runs after depth analysis when the pipeline has time budget. Early RAG is nice-to-have, not blocking.
+> **RAG POLICY (v1.1.0)**:
+> Agent 1A is a normal inline agent. The orchestrator spawns it alongside Agents 1B, 2, and 3 and awaits all four. Local ChromaDB queries are fast, so there is no need to run 1A in the background.
+> - If Agent 1A's probe call to `mcp__unified-vuln-db__get_knowledge_stats` fails (MCP not installed, ChromaDB empty, schema mismatch), Agent 1A sets `RAG_TOOLS_AVAILABLE=false`, writes a minimal `meta_buffer.md` with `# Meta-Buffer\n## RAG: UNAVAILABLE - MCP probe failed\nPhase 4b.5 RAG Validation Sweep will compensate via WebSearch fallback.`, and returns.
+> - Live Solodit API is disabled by default; the MCP only exposes `search_solodit_live` when started with `ENABLE_LIVE_SOLODIT=1`. All queries here use the local `mcp__unified-vuln-db__search` tool.
 >
 > Agent 1A writes: `meta_buffer.md`
 > Agent 1B writes: `design_context.md`, `external_production_behavior.md`, fork section of `meta_buffer.md`
 > Agent 2 writes: `build_status.md`, `function_list.md`, `call_graph.md`, `state_variables.md`, `modifiers.md`, `event_definitions.md`, `external_interfaces.md`, `static_analysis.md`, `test_results.md`
 > Agent 3 writes: `contract_inventory.md`, `attack_surface.md`, `detected_patterns.md`, `setter_list.md`, `emit_list.md`, `constraint_variables.md`, `template_recommendations.md`
-> Orchestrator writes: `recon_summary.md` (after Agents 1B, 2, 3 complete - NOT waiting for 1A)
+> Orchestrator writes: `recon_summary.md` (after all 4 agents complete)
 
 ---
 
@@ -75,10 +71,10 @@ Scan program source (lib.rs or processor.rs) to determine type:
 2. mcp__unified-vuln-db__get_attack_vectors(bug_class='{relevant pattern}')
 3. mcp__unified-vuln-db__get_root_cause_analysis(bug_class='{detected pattern}')
 
-**Batch 2** (single message, all in parallel):
-4. **MANDATORY**: mcp__unified-vuln-db__search_solodit_live(protocol_category=['{DeFi/Bridge/etc.}'], tags=['{relevant}', 'Solana'], language='Rust', quality_score=3, sort_by='Quality', max_results=20)
-5. If SEMI_TRUSTED_ROLE detected: search_solodit_live(keywords='reward compound timing front-run keeper crank', impact=['HIGH','MEDIUM'], max_results=15)
-6. search_solodit_live(keywords='Solana anchor account validation missing signer', impact=['HIGH','CRITICAL'], max_results=15)
+**Batch 2** (single message, all in parallel, local ChromaDB search):
+4. **MANDATORY**: mcp__unified-vuln-db__search(query='Solana {DeFi/Bridge/etc.} {relevant tags} Rust quality findings', n_results=20, filters={"sources": ["solodit"], "protocol_types": ["solana"]})
+5. If SEMI_TRUSTED_ROLE detected: mcp__unified-vuln-db__search(query='Solana reward compound timing front-run keeper crank', n_results=15, filters={"sources": ["solodit"], "protocol_types": ["solana"], "severities": ["high", "medium"]})
+6. mcp__unified-vuln-db__search(query='Solana anchor account validation missing signer', n_results=15, filters={"sources": ["solodit"], "protocol_types": ["solana"], "severities": ["high", "critical"]})
 
 ### Step 3: Synthesize into {SCRATCHPAD}/meta_buffer.md
 ```markdown
@@ -551,9 +547,8 @@ Return: 'DONE: {N} programs inventoried ({L} lines), {M} patterns detected, {K} 
    - `build_status.md`, `function_list.md`, `call_graph.md`, `state_variables.md`, `modifiers.md`, `event_definitions.md`, `external_interfaces.md`, `static_analysis.md`, `test_results.md` (2)
    - `contract_inventory.md`, `attack_surface.md`, `detected_patterns.md`, `setter_list.md`, `emit_list.md`, `constraint_variables.md`, `template_recommendations.md` (3)
 
-2. **RAG resilience check**: If `meta_buffer.md` missing/empty (Agent 1A timed out):
-   - Spawn lightweight RAG-retry agent (haiku, <2 min, 3 queries only)
-   - If retry fails: proceed with empty meta_buffer.md
+2. **RAG resilience check**: If `meta_buffer.md` is missing or empty (Agent 1A's probe failed because the unified-vuln-db MCP is not installed or the local ChromaDB index is empty):
+   - Proceed with empty meta_buffer.md. Phase 4b.5 RAG Validation Sweep runs after depth analysis and uses WebSearch fallback when the local index is unavailable.
 
 3. **Read summary artifacts**: template_recommendations.md (BINDING MANIFEST), attack_surface.md, detected_patterns.md
 

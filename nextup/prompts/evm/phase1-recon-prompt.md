@@ -8,25 +8,21 @@
 >
 > | Agent | Tasks | Model | Why Separate |
 > |-------|-------|-------|-------------|
-> | **1A: RAG-only** | TASK 0 steps 1-5 (vuln-db + Solodit) | **sonnet** | MCP calls can be slow; isolate from file I/O. Sonnet sufficient - mechanical query+format task. |
+> | **1A: RAG-only** | TASK 0 steps 1-5 (local vuln-db) | **sonnet** | Mechanical query+format task against local ChromaDB index. |
 > | **1B: Docs + External + Fork** | TASK 0 step 6 (fork ancestry), TASK 3, TASK 11 | opus | Tavily web search can hang; separate from RAG |
 > | **2: Build + Slither + Tests** | TASK 1, 2, 8, 9 | **sonnet** | Build/compile is blocking; Slither is fail-fast. Sonnet sufficient - tool execution + output formatting. |
 > | **3: Patterns + Surface + Templates** | TASK 4, 5, 6, 7, 10 | opus | Pure codebase analysis, no external deps. Opus needed - attack surface + template selection requires reasoning. |
 >
-> **CRITICAL - RAG TIMEOUT POLICY (v9.9.6)**:
-> Agent 1A is **FIRE-AND-FORGET**. The orchestrator MUST NOT block on Agent 1A completion.
-> - Spawn Agent 1A with `run_in_background: true`
-> - **DO NOT await Agent 1A** before proceeding to Phase 2. Wait ONLY for Agents 1B, 2, and 3.
-> - After Agents 1B/2/3 complete, check Agent 1A status:
->   - If complete → read its `meta_buffer.md` output
->   - If still running → **ABANDON IT**. Write a minimal empty `meta_buffer.md` with `# Meta-Buffer\n## RAG: UNAVAILABLE - agent timed out\nPhase 4b.5 RAG Validation Sweep will compensate.`
-> - **Rationale**: RAG MCP calls (unified-vuln-db, Solodit) can hang indefinitely (observed: 100+ minutes with 0 output). The pipeline's real RAG safety net is Phase 4b.5 (RAG Validation Sweep), which runs after depth analysis when the pipeline has time budget. Early RAG is nice-to-have, not blocking.
+> **RAG POLICY (v1.1.0)**:
+> Agent 1A is a normal inline agent. The orchestrator spawns it alongside Agents 1B, 2, and 3 and awaits all four. Local ChromaDB queries are fast, so there is no need to run 1A in the background.
+> - If Agent 1A's probe call to `mcp__unified-vuln-db__get_knowledge_stats` fails (MCP not installed, ChromaDB empty, schema mismatch), Agent 1A sets `RAG_TOOLS_AVAILABLE=false`, writes a minimal `meta_buffer.md` with `# Meta-Buffer\n## RAG: UNAVAILABLE - MCP probe failed\nPhase 4b.5 RAG Validation Sweep will compensate via WebSearch fallback.`, and returns.
+> - Live Solodit API is disabled by default; the MCP only exposes `search_solodit_live` when started with `ENABLE_LIVE_SOLODIT=1`. All queries here use the local `mcp__unified-vuln-db__search` tool.
 >
 > Agent 1A writes: `meta_buffer.md`
 > Agent 1B writes: `design_context.md`, `external_production_behavior.md`, fork section of `meta_buffer.md`
 > Agent 2 writes: `build_status.md`, `function_list.md`, `call_graph.md`, `state_variables.md`, `modifiers.md`, `event_definitions.md`, `external_interfaces.md`, `static_analysis.md`, `test_results.md`
 > Agent 3 writes: `contract_inventory.md`, `attack_surface.md`, `detected_patterns.md`, `setter_list.md`, `emit_list.md`, `constraint_variables.md`, `template_recommendations.md`
-> Orchestrator writes: `recon_summary.md` (after Agents 1B, 2, 3 complete - NOT waiting for 1A)
+> Orchestrator writes: `recon_summary.md` (after all 4 agents complete)
 
 ```
 Task(subagent_type="general-purpose", prompt="
@@ -81,9 +77,9 @@ Execute these tasks IN ORDER:
    → For each external dependency (e.g., 'staking receipt donation', 'cross-chain timing')
 3. mcp__unified-vuln-db__get_root_cause_analysis(bug_class='{detected pattern}')
 
-**Batch 2** - call ALL of these in a single message:
-4. **MANDATORY**: mcp__unified-vuln-db__search_solodit_live(protocol_category=['{DeFi/Bridge/etc.}'], tags=['{relevant}'], language='Solidity', quality_score=3, sort_by='Quality', max_results=20)
-5. If SEMI_TRUSTED_ROLE detected: search_solodit_live(keywords='reward compound timing front-run keeper', impact=['HIGH','MEDIUM'], max_results=15)
+**Batch 2** - call ALL of these in a single message (local ChromaDB search):
+4. **MANDATORY**: mcp__unified-vuln-db__search(query='{DeFi/Bridge/etc.} {relevant tags} Solidity quality findings', n_results=20, filters={"sources": ["solodit"]})
+5. If SEMI_TRUSTED_ROLE detected: mcp__unified-vuln-db__search(query='reward compound timing front-run keeper', n_results=15, filters={"sources": ["solodit"], "severities": ["high", "medium"]})
 
 ### Step 6: Fork Ancestry Research
 Read {NEXTUP_HOME}/agents/skills/evm/fork-ancestry/SKILL.md and execute all 4 steps:

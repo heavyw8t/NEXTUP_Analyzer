@@ -25,6 +25,20 @@ Recon detects that the protocol integrates with LayerZero for cross-chain messag
 
 ---
 
+## 0. Taxonomy Pre-Search (MANDATORY first step)
+
+Before any code analysis, query the NEXTUP taxonomy for finding types that overlap this skill's domain:
+
+1. Read `{NEXTUP_HOME}/taxonomy/evm.json`.
+2. Grep the `types[].markers` arrays for keywords tied to this integration. For this skill, the relevant marker seed list is: `layerzero`, `OApp`, `OFT`, `lzSend`, `lzReceive`, `peer`, `nonce`, `endpoint`, `composer`, `options`
+3. For every match, record the taxonomy `id` (e.g. `EVM-D03`), `name`, `category`, `typical_direction`, and which markers matched.
+4. When a finding produced by this skill maps to a taxonomy type, tag it with both IDs: `[LZ-N] (taxonomy: <ID> <NAME>)`.
+5. Any taxonomy marker that appears in scope code but produces no finding must be affirmatively dismissed with a one-line reason in your output.
+
+If `taxonomy/evm.json` is missing or unreadable, log to `{SCRATCHPAD}/trace_issues.md` when `TRACE_MODE == true` and continue with marker-free analysis.
+
+---
+
 ## 1. Peer Configuration and Chain Identity
 
 LayerZero V2 uses a peer mapping (`eid → bytes32 address`) to authenticate cross-chain messages. Misconfiguration is the #1 source of LayerZero integration bugs in audit contests.

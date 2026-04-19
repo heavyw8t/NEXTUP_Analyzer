@@ -7,26 +7,22 @@
 >
 > | Agent | Model | Tasks | Why Separate |
 > |-------|-------|-------|-------------|
-> | **1A: RAG-only** | sonnet | TASK 0 steps 1-5 (vuln-db + Solodit) | Mechanical query+format - no deep reasoning needed |
+> | **1A: RAG-only** | sonnet | TASK 0 steps 1-5 (local vuln-db) | Mechanical query+format task against local ChromaDB index |
 > | **1B: Docs + External + Fork** | opus | TASK 0 step 6 (fork ancestry), TASK 3, TASK 11 | Tavily can hang; fork ancestry needs reasoning |
 > | **2: Build + Static + Tests** | sonnet | TASK 1, 2, 8, 9 | Tool execution+output formatting - no deep reasoning needed |
 > | **3: Patterns + Surface + Templates** | opus | TASK 4, 5, 6, 7, 10 | Pure codebase analysis, fast; pattern detection needs reasoning |
 >
 >
-> **CRITICAL - RAG TIMEOUT POLICY (v9.9.6)**:
-> Agent 1A is **FIRE-AND-FORGET**. The orchestrator MUST NOT block on Agent 1A completion.
-> - Spawn Agent 1A with `run_in_background: true`
-> - **DO NOT await Agent 1A** before proceeding to Phase 2. Wait ONLY for Agents 1B, 2, and 3.
-> - After Agents 1B/2/3 complete, check Agent 1A status:
->   - If complete → read its `meta_buffer.md` output
->   - If still running → **ABANDON IT**. Write a minimal empty `meta_buffer.md` with `# Meta-Buffer\n## RAG: UNAVAILABLE - agent timed out\nPhase 4b.5 RAG Validation Sweep will compensate.`
-> - **Rationale**: RAG MCP calls (unified-vuln-db, Solodit) can hang indefinitely (observed: 100+ minutes with 0 output). The pipeline's real RAG safety net is Phase 4b.5 (RAG Validation Sweep), which runs after depth analysis when the pipeline has time budget. Early RAG is nice-to-have, not blocking.
+> **RAG POLICY (v1.1.0)**:
+> Agent 1A is a normal inline agent. The orchestrator spawns it alongside Agents 1B, 2, and 3 and awaits all four. Local ChromaDB queries are fast, so there is no need to run 1A in the background.
+> - If Agent 1A's probe call to `mcp__unified-vuln-db__get_knowledge_stats` fails (MCP not installed, ChromaDB empty, schema mismatch), Agent 1A sets `RAG_TOOLS_AVAILABLE=false`, writes a minimal `meta_buffer.md` with `# Meta-Buffer\n## RAG: UNAVAILABLE - MCP probe failed\nPhase 4b.5 RAG Validation Sweep will compensate via WebSearch fallback.`, and returns.
+> - Live Solodit API is disabled by default; the MCP only exposes `search_solodit_live` when started with `ENABLE_LIVE_SOLODIT=1`. All queries here use the local `mcp__unified-vuln-db__search` tool.
 >
 > Agent 1A writes: `meta_buffer.md`
 > Agent 1B writes: `design_context.md`, `external_production_behavior.md`, fork section of `meta_buffer.md`
 > Agent 2 writes: `build_status.md`, `function_list.md`, `call_graph.md`, `state_variables.md`, `modifiers.md`, `event_definitions.md`, `external_interfaces.md`, `static_analysis.md`, `test_results.md`
 > Agent 3 writes: `contract_inventory.md`, `attack_surface.md`, `detected_patterns.md`, `setter_list.md`, `emit_list.md`, `constraint_variables.md`, `template_recommendations.md`
-> Orchestrator writes: `recon_summary.md` (after Agents 1B, 2, 3 complete - NOT waiting for 1A)
+> Orchestrator writes: `recon_summary.md` (after all 4 agents complete)
 
 ---
 
@@ -77,10 +73,10 @@ Scan Move source files (*.move, excluding build/ and .aptos/) to determine proto
 2. mcp__unified-vuln-db__get_attack_vectors(bug_class='{relevant pattern}')
 3. mcp__unified-vuln-db__get_root_cause_analysis(bug_class='{detected pattern}')
 
-**Batch 2** (single message, all in parallel):
-4. **MANDATORY**: mcp__unified-vuln-db__search_solodit_live(protocol_category=['{DeFi/Bridge/etc.}'], tags=['{relevant}', 'Aptos', 'Move'], language='Move', quality_score=3, sort_by='Quality', max_results=20)
-5. If SEMI_TRUSTED_ROLE detected: search_solodit_live(keywords='reward compound timing front-run keeper operator admin', impact=['HIGH','MEDIUM'], max_results=15)
-6. search_solodit_live(keywords='Move aptos module ability type safety resource object fungible_asset', impact=['HIGH','CRITICAL'], max_results=15)
+**Batch 2** (single message, all in parallel, local ChromaDB search):
+4. **MANDATORY**: mcp__unified-vuln-db__search(query='Aptos Move {DeFi/Bridge/etc.} {relevant tags} quality findings', n_results=20, filters={"sources": ["solodit"], "protocol_types": ["aptos"]})
+5. If SEMI_TRUSTED_ROLE detected: mcp__unified-vuln-db__search(query='reward compound timing front-run keeper operator admin', n_results=15, filters={"sources": ["solodit"], "protocol_types": ["aptos"], "severities": ["high", "medium"]})
+6. mcp__unified-vuln-db__search(query='Move Aptos module ability type safety resource object fungible_asset', n_results=15, filters={"sources": ["solodit"], "protocol_types": ["aptos"], "severities": ["high", "critical"]})
 
 ### Step 3: Classify Aptos-Specific Vulnerability Classes
 
@@ -208,8 +204,8 @@ Read {NEXTUP_HOME}/agents/skills/aptos/fork-ancestry/SKILL.md (if it exists) or 
 4. Compare module names, struct names, and function signatures against parent patterns
 
 **For each detected parent**:
-1. Query Solodit: `search_solodit_live(keywords='{parent_name} aptos move', impact=['HIGH','CRITICAL'], sort_by='Quality', max_results=15)` -- skip if fails
-2. Query Solodit: `search_solodit_live(keywords='{parent_name} fork modified divergence', impact=['HIGH','MEDIUM'], sort_by='Rarity', max_results=10)` -- skip if fails
+1. Query local index: `mcp__unified-vuln-db__search(query='{parent_name} Aptos Move', n_results=15, filters={"sources": ["solodit"], "protocol_types": ["aptos"], "severities": ["high", "critical"]})` -- skip if fails
+2. Query local index: `mcp__unified-vuln-db__search(query='{parent_name} fork modified divergence', n_results=10, filters={"sources": ["solodit"], "protocol_types": ["aptos"], "severities": ["high", "medium"]})` -- skip if fails
 3. Query Tavily: `tavily_search(query='{parent_name} Aptos Move vulnerability exploit audit finding 2024 2025 2026')` -- skip if fails
 4. Analyze divergences: modified struct abilities, changed access control, added/removed functions, modified resource storage patterns, changed signer requirements, altered module dependencies
 
@@ -1009,12 +1005,8 @@ Return: 'DONE: {N} modules inventoried ({L} lines), {M} patterns detected, {K} t
    - `build_status.md`, `function_list.md`, `call_graph.md`, `state_variables.md`, `modifiers.md`, `event_definitions.md`, `external_interfaces.md`, `static_analysis.md`, `test_results.md` (2)
    - `contract_inventory.md`, `attack_surface.md`, `detected_patterns.md`, `setter_list.md`, `emit_list.md`, `constraint_variables.md`, `template_recommendations.md` (3)
 
-2. **RAG resilience check**: If `meta_buffer.md` missing/empty (Agent 1A timed out):
-   - Spawn lightweight RAG-retry agent (haiku, <2 min, 3 queries only):
-     1. get_common_vulnerabilities(protocol_type)
-     2. get_attack_vectors(primary_pattern)
-     3. search_solodit_live(protocol_category=[category], language='Move', quality_score=3, max_results=10)
-   - If retry fails: proceed with empty meta_buffer.md
+2. **RAG resilience check**: If `meta_buffer.md` is missing or empty (Agent 1A's probe failed because the unified-vuln-db MCP is not installed or the local ChromaDB index is empty):
+   - Proceed with empty meta_buffer.md. Phase 4b.5 RAG Validation Sweep runs after depth analysis and uses WebSearch fallback when the local index is unavailable.
 
 3. **Read summary artifacts**: template_recommendations.md (BINDING MANIFEST), attack_surface.md, detected_patterns.md
 

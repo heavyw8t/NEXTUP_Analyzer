@@ -176,27 +176,6 @@ def _r2_all_view_no_entry(combo) -> bool:
     return False
 
 
-def _r3_type_param_incompatible(combo) -> bool:
-    """Drop if two pieces encode a generic type-parameter mismatch without a
-    phantom / type_info bridge. Heuristic: state_touched entries of form
-    `T:Coin<X>` or explicit `type_param:` marker disagree across pieces."""
-    type_tags: set[str] = set()
-    for p in combo:
-        for st in p.get("state_touched", []):
-            low = st.lower()
-            if low.startswith("type_param:") or low.startswith("generic:") or "coin<" in low or "fungibleasset<" in low:
-                type_tags.add(st)
-    if len(type_tags) <= 1:
-        return True
-    # Phantom or type_info bridge present -> keep.
-    for p in combo:
-        snip = (p.get("snippet", "") or "").lower()
-        if "phantom" in snip or "type_info::type_of" in snip or "type_info" in snip:
-            return True
-    # Multiple distinct concrete type tags, no bridge -> drop.
-    return False
-
-
 def _r4_upgrade_policy_immutable(combo) -> bool:
     """Drop if any piece declares `upgrade_policy::immutable` in its snippet
     AND the chain requires upgrade-driven behavior change (heuristic: another
@@ -214,59 +193,13 @@ def _r4_upgrade_policy_immutable(combo) -> bool:
     return True
 
 
-def _r5_ability_forbids_chain(combo) -> bool:
-    """Drop if the chain semantically requires copy on a value or drop on an
-    obligation and no J01/J02 piece is present to authorize it. Heuristic:
-    state_touched contains `requires:copy` / `requires:drop` and no matching
-    J-piece is present."""
-    needs_copy = False
-    needs_drop = False
-    for p in combo:
-        for st in p.get("state_touched", []):
-            low = st.lower()
-            if low in ("requires:copy", "needs_copy"):
-                needs_copy = True
-            if low in ("requires:drop", "needs_drop"):
-                needs_drop = True
-    suffixes = _suffixes(combo)
-    if needs_copy and COPY_ON_VALUE_SUFFIX not in suffixes:
-        return False
-    if needs_drop and DROP_ON_OBLIGATION_SUFFIX not in suffixes:
-        return False
-    return True
-
-
-def _r6_ref_not_generated(combo) -> bool:
-    """Drop if any piece asserts a `*Ref` dependency that was explicitly not
-    generated. Heuristic: state_touched contains `ref_missing:<Kind>` and
-    another piece in the combo uses that same ref kind."""
-    missing: set[str] = set()
-    used: set[str] = set()
-    for p in combo:
-        for st in p.get("state_touched", []):
-            low = st.lower()
-            if low.startswith("ref_missing:"):
-                missing.add(low.split(":", 1)[1])
-            if low.startswith("ref_used:"):
-                used.add(low.split(":", 1)[1])
-    if missing & used:
-        return False
-    return True
-
-
 def extra_eliminate(combo) -> bool:
     """Return True to KEEP, False to drop. Runs AFTER shared.py default rules."""
     if not _r1_same_module_disjoint_resources(combo):
         return False
     if not _r2_all_view_no_entry(combo):
         return False
-    if not _r3_type_param_incompatible(combo):
-        return False
     if not _r4_upgrade_policy_immutable(combo):
-        return False
-    if not _r5_ability_forbids_chain(combo):
-        return False
-    if not _r6_ref_not_generated(combo):
         return False
     return True
 

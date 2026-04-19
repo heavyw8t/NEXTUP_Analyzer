@@ -1,5 +1,5 @@
 {
-  "min_categories": 2,
+  "min_categories": 1,
   "require_shared_contract_or_call": true,
   "require_interaction_link": true,
   "eliminate_actor_conflict": true,
@@ -15,8 +15,6 @@
     "eliminate_locked_initializer",
     "eliminate_delegatecall_no_sink",
     "eliminate_guarded_reentrancy",
-    "eliminate_subwei_rounding_no_amplifier",
-    "eliminate_unprofitable_flash",
     "eliminate_authenticated_cross_chain",
     "eliminate_slippage_absorbed_reserve_price",
     "eliminate_timelocked_parameter",

@@ -1,6 +1,9 @@
 # Personal local changelog — never pushed (per SKILL.md R6)
 CHANGELOG.md
 
+# Session resume notes — local only
+CONTINUE.md
+
 # Python caches
 __pycache__/
 *.pyc
