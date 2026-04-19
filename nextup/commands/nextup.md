@@ -68,6 +68,18 @@ echo -n "  Move:     " && \
 Display the output to the user. If any required tools (claude, python, npx, git) show ✗, warn:
 > **Warning**: Missing required tools. Python 3 is required for the NEXTUP combinator engine. npx and git are required for the audit pipeline.
 
+Also record the probe results into `{SCRATCHPAD}/build_status.md` (creating it if missing — recon Agent 2 will append more lines later). Specifically record the availability flags that later phases key behavior off:
+
+```
+MEDUSA_AVAILABLE: true|false
+MEDUSA_VERSION: {output of `medusa --version`}|unknown
+FORGE_AVAILABLE: true|false
+SLITHER_AVAILABLE: true|false
+TRIDENT_AVAILABLE: true|false
+```
+
+Phase 4b.5 RAG sweep and phase4b-loop.md Medusa campaign read this file to gate their spawns (see `rules/phase4-confidence-scoring.md` and `prompts/evm/phase4b-loop.md`). Writing these flags during Step 0a ensures the gates are deterministic, not based on in-agent command detection.
+
 If optional tools are missing, note briefly:
 > Optional tools with ○ are not installed — the pipeline degrades gracefully but coverage may be reduced.
 
@@ -468,12 +480,15 @@ Replace placeholders: `{path}`, `{scratchpad}`, `{docs_path_or_url_if_provided}`
 
 Agent 1A runs inline alongside the others (local CSV-backed queries are in-process). If the unified-vuln-db MCP is not installed or the index is empty, Agent 1A's probe fails, it writes a minimal `meta_buffer.md`, and returns; Phase 4b.5 RAG Sweep compensates later with the WebSearch fallback.
 
-**Light mode override**: Spawn only 2 merged agents (both sonnet, both foreground). Skip RAG (Agent 1A) and fork ancestry entirely per Light Mode Orchestration override #2.
+**Light mode override**: Spawn only 2 merged agents (both sonnet, both foreground). Skip RAG (Agent 1A) and fork ancestry entirely per Light Mode Orchestration override #2. When Light mode skips Agent 1A, the orchestrator MUST write `{SCRATCHPAD}/rag_status.md` with the line `RAG_DISABLED_BY_MODE: light` so Phase 4b.5 can distinguish an intentional skip from an MCP failure. In Core / Thorough the orchestrator does NOT write this file; Phase 4b.5 treats its absence as "RAG enabled, proceed normally."
 
 ### After All 4 Agents Return
 1. Verify artifacts exist: `ls {scratchpad}/`
 2. Read: `recon_summary.md`, `template_recommendations.md`, `attack_surface.md`
-3. **RAG resilience check**: If `meta_buffer.md` is missing or empty (Agent 1A's probe failed because the unified-vuln-db MCP is not installed or the local CSV index manifest is missing), proceed with empty meta_buffer.md. Phase 4b.5 RAG Validation Sweep runs after depth analysis and uses WebSearch fallback when the local index is unavailable.
+3. RAG status signal (three cases, mutually exclusive, logged for observability):
+   - Light mode intentional skip → `rag_status.md` contains `RAG_DISABLED_BY_MODE: light`. Phase 4b.5 writes floor scores (0.3) tagged `[RAG: LIGHT_MODE_SKIP]`, does NOT run WebSearch fallback.
+   - Core / Thorough and 1A succeeded → `meta_buffer.md` populated, `build_status.md` has `RAG_TOOLS_AVAILABLE: true`. Phase 4b.5 seeds from `meta_buffer.md` and runs live MCP for uncovered findings.
+   - Core / Thorough and 1A failed (MCP unavailable or empty index) → `meta_buffer.md` contains `## RAG: UNAVAILABLE`, `build_status.md` has `RAG_TOOLS_AVAILABLE: false`. Phase 4b.5 falls back to WebSearch; if that also fails, writes floor scores tagged `[RAG: ALL_TOOLS_FAILED]`.
 4. **Hard gate**: ALL artifacts must exist before Phase 2
 
 ---
@@ -596,6 +611,7 @@ After all return:
 | 4b (loop) | `{NEXTUP_HOME}/prompts/{LANGUAGE}/phase4b-loop.md` | Orchestrator | Always |
 | 4b (depth) | `{NEXTUP_HOME}/prompts/{LANGUAGE}/phase4b-depth-templates.md` | 4 Depth Agents | Always |
 | 4b (scanners) | `{NEXTUP_HOME}/prompts/{LANGUAGE}/phase4b-scanner-templates.md` | 3 Scanners + Validation + Design Stress | Always |
+| 4b.4 | `{NEXTUP_HOME}/rules/phase4b-precedent-scout.md` | Precedent scouts (haiku, one per injectable finding) | Core / Thorough |
 | 4c | `{NEXTUP_HOME}/rules/phase4c-chain-prompt.md` | Chain Analysis (+ enabler enumeration) | Always |
 | 5 | `{NEXTUP_HOME}/prompts/{LANGUAGE}/phase5-verification-prompt.md` + `{NEXTUP_HOME}/rules/phase5-poc-execution.md` | Verifiers (with PoC execution) | Both (scope differs) |
 | 5.5 | (orchestrator inline) | Post-verification finding extraction | Always |
@@ -806,14 +822,16 @@ Read `{NEXTUP_DIR}/combos_ranked.json`. Transform the top combinations into inve
 
 Write `{NEXTUP_DIR}/investigation_targets.md` — see `{NEXTUP_HOME}/SKILL.md` Phase 2b for the full format and routing rules.
 
-**Routing rules** — assign each combination to a depth domain based on its categories:
-| Categories in combo | Primary depth domain |
-|--------------------|--------------------|
-| A + E, A + G, E + G | depth-token-flow |
-| C + F, C + H, F + H | depth-state-trace |
-| A + I, E + I, any with A07 (zero passthrough) | depth-edge-case |
-| D + anything | depth-external |
-| Mixed (3+ categories) | assign to domain of the highest-scored piece |
+**Routing rules** — assign each combination to exactly one depth domain based on its sorted category set (`combo.categories` in `combos_ranked.json`). Rules evaluate top-down; first match wins. No piece-level scoring required.
+
+| Priority | Match condition on `combo.categories` | Primary depth domain |
+|----------|--------------------------------------|---------------------|
+| 1 | contains `D` | depth-external |
+| 2 | contains `A07` (zero passthrough) | depth-edge-case |
+| 3 | two or more of {`A`, `E`, `G`} | depth-token-flow |
+| 4 | two or more of {`C`, `F`, `H`} | depth-state-trace |
+| 5 | `A`+`I` or `E`+`I` | depth-edge-case |
+| 6 | fallback | depth-state-trace |
 
 Each target is a focused question, not a conclusion. Tell the depth agent WHAT to investigate, not WHAT to find.
 
@@ -925,6 +943,26 @@ The orchestrator runs the full loop autonomously:
 
 6. **Design Stress Testing (Thorough mode only)**: ALWAYS spawn Design Stress Testing Agent. 1 slot is pre-reserved and UNCONDITIONAL — not a "budget redirect." This agent runs regardless of remaining budget.
 
+### Phase 4b.4: Injectable Example-Precedent Scout (MANDATORY for Core/Thorough)
+
+> **Read full prompt from**: `{NEXTUP_HOME}/rules/phase4b-precedent-scout.md`
+> **Trigger**: Core and Thorough modes, after iteration 1 depth + manifest verification, before scoring. Skipped in Light mode (no injectable investigation agents run there, so there are no findings to scout against).
+> **Purpose**: For each finding produced by an injectable investigation agent, sweep the scope for OTHER locations matching the parent skill's `## Real-world examples` patterns. Feeds the `Example precedent:` / `precedent_match` signal used by the scoring agent's RAG Match axis (see `phase4-confidence-scoring.md` Axis 4, +0.2 per match, +0.1 for scope-level twin).
+
+**Flow**:
+1. Collect findings from all `{SCRATCHPAD}/depth_{domain}_injectable_findings.md` files produced by iteration 1 injectable investigation agents.
+2. For each finding, read its parent skill's `## Real-world examples` section from `{NEXTUP_HOME}/agents/skills/injectable/{skill}/SKILL.md`.
+3. Spawn one haiku scout per finding with the template in `phase4b-precedent-scout.md`. Cap each scout at 30 Grep/Read calls; 60s typical runtime.
+4. After all scouts return, read every `{SCRATCHPAD}/precedent_{FINDING_ID}.md` and apply the post-processing rules:
+   - HIGH-confidence hits → append as NEW candidate finding entries to `findings_inventory.md`, tagged with `Example precedent:` citation and a pointer to the parent finding id.
+   - MEDIUM-confidence hits → append a `Related locations:` footer to the parent finding entry. Phase 5 verifiers visit these during proof-or-refute.
+   - LOW-confidence hits → discard.
+5. The scoring agent (next step) reads the updated `findings_inventory.md` and computes the Axis 4 precedent_match bonus automatically.
+
+**Budget**: 1 haiku agent per injectable finding. Typical Core run = 4-10 scouts; Thorough run = 8-20 scouts. Off-budget (does not count against the depth spawn cap).
+
+**Failure mode**: A missing `precedent_{FINDING_ID}.md` is logged and the parent finding proceeds to scoring without the precedent_match bonus. Not a blocker.
+
 ### THOROUGH CHECKPOINT: Post-Depth (orchestrator inline)
 
 ```
@@ -951,11 +989,19 @@ The sweep MUST be attempted. Writing floor scores without attempting is a VIOLAT
 > **Trigger**: Always runs before spawning Phase 5 verification agents.
 
 **Flow**:
-1. **Step 0a — Early exit** (orchestrator inline): Check each finding's referenced file:line actually exists and contains the claimed code. Remove broken refs as `FALSE_POSITIVE`. Cap pure trusted-actor findings at Low.
-2. **Step 0b — Invalidation selector** (1 haiku agent, batched): Reads the invalidation library (`{NEXTUP_HOME}/rules/invalidation-library.md`) and picks 2-3 most applicable generic invalidation reasons per finding. These become adversarial hints injected into verifier prompts.
-3. **Step 0c — External research** (0-1 sonnet agent, conditional): If findings reference external protocol behavior (Chainlink, Aave, Pendle, etc.), spawns a sonnet agent to verify claims via WebSearch. Results injected into verifier prompts.
+1. **Step 0a — Early exit** (orchestrator inline): Check each finding's referenced file:line actually exists and contains the claimed code. Broken refs → `FALSE_POSITIVE`. Pure trusted-actor findings → capped at Low. Write `{SCRATCHPAD}/prescreen_early_exit.md`.
+2. **Step 0a.filter — FALSE_POSITIVE removal from verification queue** (orchestrator inline, MANDATORY): Read `prescreen_early_exit.md`. Write `{SCRATCHPAD}/verification_queue.md` = the set of findings from `hypotheses.md` MINUS every finding marked `EARLY_EXIT: BROKEN_REF` / `FALSE_POSITIVE`. Phase 5 verifier spawning uses `verification_queue.md`, NOT `hypotheses.md`, to choose which findings to verify. FALSE_POSITIVE findings stay in `hypotheses.md` with their tag (for the SUMMARY.md rejected appendix in Phase 6) but do NOT enter verification.
+3. **Step 0b — Invalidation selector** (1 haiku agent, batched): Reads `{NEXTUP_HOME}/rules/invalidation-library.md` and picks 2-3 most applicable invalidation reasons per surviving finding. Writes `{SCRATCHPAD}/prescreen_invalidation_hints.md`.
+4. **Step 0c — External research** (0-1 sonnet agent, conditional): If findings reference external protocol behavior (Chainlink, Aave, Pendle, etc.), spawns a sonnet agent to verify claims via WebSearch. Writes `{SCRATCHPAD}/prescreen_external_research.md`.
+5. **Step 0d — Orchestrator injection into verifier prompts** (MANDATORY, before spawning any Phase 5 verifier):
+   - Read `prescreen_invalidation_hints.md` and `prescreen_external_research.md`.
+   - For each finding in `verification_queue.md`, compose the verifier prompt by substituting:
+     - `{IF_PRESCREEN_HINTS_EXIST}` → `true` if any hints exist for this finding, else `false`
+     - `{INVALIDATION_HINTS_FOR_THIS_FINDING}` → the 2-3 hints for this finding (empty string if none)
+     - `{EXTERNAL_RESEARCH_FOR_THIS_FINDING}` → the relevant external-research block (empty string if no external deps)
+   - A verifier prompt spawned with any of these placeholders left unsubstituted is a WORKFLOW VIOLATION — log to `{SCRATCHPAD}/violations.md`.
 
-**Verifier enrichment**: Each Phase 5 verifier receives its finding's invalidation hints and external research as additional prompt sections. Verifiers MUST address each hint during defender-perspective analysis.
+**Verifier enrichment**: Each Phase 5 verifier receives its finding's invalidation hints and external research as substituted prompt sections. Verifiers MUST address each hint during defender-perspective analysis. Phase 5.2 Final Validation agents receive the same substituted blocks.
 
 **Budget**: 1 haiku + 0-1 sonnet. Typically saves more verification budget than it costs.
 
@@ -1003,7 +1049,10 @@ After ALL verifiers complete:
 3. For each: check if already covered by an existing hypothesis
 4. If NOT covered: create a new hypothesis and add to `hypotheses.md`
 5. Assign severity using the standard matrix
-6. These do NOT require re-verification
+6. Verification routing (MANDATORY):
+   - If assigned severity >= Medium → the new observation MUST go through a targeted Phase 5 PoC verification pass before it enters Phase 5.6 (individual Low escalation) or Phase 5.7 (compound escalation). Tag the PoC result onto the finding like any other Phase 5 finding. "Trust the verifier" is not sufficient for Medium+ claims — the original verifier was focused on a different finding.
+   - If assigned severity == Low or Info → tag the finding with `[VER-NEW-UNVERIFIED]`. No re-verification required, but Phase 5.7 compound escalation MUST treat `[VER-NEW-UNVERIFIED]` findings as weak-evidence inputs: an escalation chain that depends on a `[VER-NEW-UNVERIFIED]` finding cannot be confirmed beyond Medium without Phase 5 PoC verification of the chain.
+7. Budget: the targeted Medium+ verification pass uses the standard Phase 5 verifier template and is NOT counted against the original Phase 5 budget (it is a Phase 5.5 sub-step).
 
 ### Phase 5.6: Individual Low Escalation
 

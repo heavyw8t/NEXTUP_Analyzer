@@ -52,10 +52,16 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   // Core mode skips invariant fuzz to save budget - Thorough mode only.
 
   // ═══ MEDUSA FUZZ CAMPAIGN (EVM Thorough only, MANDATORY if installed) ═══
+  // MEDUSA_AVAILABLE source: read {SCRATCHPAD}/build_status.md, look for `MEDUSA_AVAILABLE: true|false`.
+  // That line is set by Step 0a toolchain probe (commands/nextup.md) based on `command -v medusa`.
+  // If the line is missing, assume MEDUSA_AVAILABLE = false and log
+  // `MEDUSA_UNAVAILABLE: flag missing from build_status.md` to {SCRATCHPAD}/violations.md.
   // HARD GATE: If MEDUSA_AVAILABLE == true, this campaign MUST run. Silently skipping = VIOLATION.
   // Runs IN PARALLEL with the Foundry invariant fuzz agent (if any). Zero depth budget cost.
   // Medusa generates its OWN standalone harness contracts - NOT Foundry-compatible.
-  // Graceful degradation: if medusa not installed, skip silently (log MEDUSA_UNAVAILABLE).
+  MEDUSA_AVAILABLE = read_flag(SCRATCHPAD + "/build_status.md", "MEDUSA_AVAILABLE", default=false)
+  if not MEDUSA_AVAILABLE:
+    log("MEDUSA_UNAVAILABLE: medusa not installed or flag missing — skipping Medusa campaign")
   if MEDUSA_AVAILABLE and MODE == thorough and LANGUAGE == evm:
     spawn medusa_campaign_agent(model="sonnet", prompt="
       You are the Medusa Fuzz Campaign Agent. You derive protocol-specific invariants and run Medusa stateful fuzzing.
@@ -226,6 +232,32 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
       depth_spawns_used += 1
   if any_respawned: await respawned results; re-merge
 
+  // ═══ STEP 4b.4: Injectable example-precedent scout ═══
+  // Core and Thorough only. Skipped in Light (no injectable investigation agents ran).
+  // Full spec: {NEXTUP_HOME}/rules/phase4b-precedent-scout.md
+  // Per-scout spawn: one haiku agent per finding in depth_{d}_injectable_findings.md
+  // Writes: {SCRATCHPAD}/precedent_{FINDING_ID}.md
+  // Purpose: populate the Example precedent: / precedent_match signal that the
+  // scoring agent reads in Axis 4 (RAG Match). Without 4b.4 that axis bonus is dead.
+  if MODE != light and len(injectable_agents) > 0:
+    injectable_findings = collect_findings_from([SCRATCHPAD + "/depth_" + d + "_injectable_findings.md"
+                                                 for d in injectable_agents])
+    scout_manifest = []
+    for f in injectable_findings:
+      examples_block = splice_real_world_examples(f.parent_skill_path)
+      spawn precedent_scout(finding=f, examples=examples_block, model="haiku")
+      scout_manifest.append((f.id, SCRATCHPAD + "/precedent_" + f.id + ".md"))
+    await all scouts
+    // Manifest verification for scouts
+    for (fid, path) in scout_manifest:
+      if not exists(path):
+        log("PRECEDENT SCOUT MISSING: " + fid + " — continuing without precedent signal")
+    // Orchestrator post-processing per rules/phase4b-precedent-scout.md:
+    //   HIGH-confidence hits → append as new candidate findings to findings_inventory.md
+    //   MEDIUM-confidence hits → append Related locations: footer to parent finding
+    //   LOW-confidence hits → discard
+    apply_precedent_scout_output(SCRATCHPAD, scout_manifest)
+
   // ═══ SCORE all findings ═══
   // NOTE: Sibling Propagation merged back into Validation Sweep as CHECK 9.
   // Saves 1 depth budget slot. Validation Sweep already reads findings_inventory.md.
@@ -254,9 +286,15 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
     write {SCRATCHPAD}/adaptive_loop_log.md (1 iteration, exit: Core mode - no iter 2-3)
     goto DONE
 
-  // MANDATORY (Thorough only): Always proceed to iteration 2 if uncertain findings exist AND
-  // any uncertain finding has severity Medium or above. Skip iteration 2 ONLY IF all uncertain
-  // findings are Low/Info severity. "Pragmatic" skips are PROHIBITED for Medium+ uncertain findings.
+  // ═══ ITERATION 2 GATE (mechanical) ═══
+  // See rules/phase4-confidence-scoring.md Convergence Criteria #3a.
+  // Iteration 2 fires iff at least one uncertain finding has severity Medium or above.
+  iter2_required = any(f.severity in {Medium, High, Critical} for f in uncertain)
+  if not iter2_required:
+    write {SCRATCHPAD}/adaptive_loop_log.md (1 iteration, exit: all uncertain are Low/Info)
+    goto DONE
+  // If iter2_required is true and we reach iteration 2 spawn below, the gate has passed.
+  // Skipping iteration 2 when iter2_required is true is a workflow violation (log + still spawn).
 
   // ═══ ITERATION 2: Micro-Niche Targeted Depth (Thorough only) ═══
   // Instead of spawning broad domain agents with up to 5 findings each,
@@ -294,7 +332,9 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   if len(still_uncertain) == 0 OR depth_spawns_used >= max_depth_spawns:
     write {SCRATCHPAD}/adaptive_loop_log.md (2 iterations, exit reason)
     goto DONE
-  if no_confidence_improvement(still_uncertain):
+  // progress(iter_2) = at least one uncertain Medium+ finding's composite increased by >= 0.10
+  // driven by NEW evidence (AD-5). See rules/phase4-confidence-scoring.md Convergence Criteria #3.
+  if not progress_since_previous_iteration(still_uncertain, min_delta=0.10, require_new_evidence=true):
     for f in still_uncertain: f.verdict = CONTESTED
     write {SCRATCHPAD}/adaptive_loop_log.md (2 iterations, exit: no progress)
     goto DONE

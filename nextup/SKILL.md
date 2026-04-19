@@ -304,14 +304,18 @@ Generated from {N} puzzle pieces, {S} surviving combinations (k={k}, elimination
 ### Target NX-EX-1: ...
 ```
 
-**Routing rules** — assign each combination to a depth domain based on its categories:
-| Categories in combo | Primary depth domain |
-|--------------------|--------------------|
-| A + E, A + G, E + G | depth-token-flow |
-| C + F, C + H, F + H | depth-state-trace |
-| A + I, E + I, any with A07 (zero passthrough) | depth-edge-case |
-| D + anything | depth-external |
-| Mixed (3+ categories) | assign to domain of the highest-scored piece |
+**Routing rules** — assign each combination to exactly one depth domain based on its sorted category set (`combo.categories`). Rules evaluate top-down; first match wins. This is deterministic from `combos_ranked.json` alone (no piece-level scoring needed).
+
+| Priority | Match condition on `combo.categories` | Primary depth domain |
+|----------|--------------------------------------|---------------------|
+| 1 | contains `D` | depth-external |
+| 2 | contains `A07` (zero passthrough) | depth-edge-case |
+| 3 | contains any of `A`, `E`, `G` AND any of `A`, `E`, `G` (two or more of these) | depth-token-flow |
+| 4 | contains any of `C`, `F`, `H` AND any of `C`, `F`, `H` (two or more of these) | depth-state-trace |
+| 5 | contains `A` + `I` or `E` + `I` | depth-edge-case |
+| 6 | fallback (none of the above) | depth-state-trace |
+
+A 3+ category combo is handled by priority 1-5 naturally: the presence of `D` routes to external, `A07` routes to edge-case, and otherwise the dominant pair decides. The orchestrator does NOT need per-piece scores.
 
 Each target is a focused question, not a conclusion. Tell the depth agent WHAT to investigate, not WHAT to find.
 

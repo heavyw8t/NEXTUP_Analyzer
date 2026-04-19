@@ -249,6 +249,26 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
       depth_spawns_used += 1
   if any_respawned: await respawned results; re-merge
 
+  // ═══ STEP 4b.4: Injectable example-precedent scout ═══
+  // Core and Thorough only. Skipped in Light (no injectable investigation agents ran).
+  // Full spec: {NEXTUP_HOME}/rules/phase4b-precedent-scout.md
+  // Per-scout spawn: one haiku agent per finding in depth_{d}_injectable_findings.md
+  // Writes: {SCRATCHPAD}/precedent_{FINDING_ID}.md
+  // Populates the Example precedent: / precedent_match signal read by scoring Axis 4.
+  if MODE != light and len(injectable_agents) > 0:
+    injectable_findings = collect_findings_from([SCRATCHPAD + "/depth_" + d + "_injectable_findings.md"
+                                                 for d in injectable_agents])
+    scout_manifest = []
+    for f in injectable_findings:
+      examples_block = splice_real_world_examples(f.parent_skill_path)
+      spawn precedent_scout(finding=f, examples=examples_block, model="haiku")
+      scout_manifest.append((f.id, SCRATCHPAD + "/precedent_" + f.id + ".md"))
+    await all scouts
+    for (fid, path) in scout_manifest:
+      if not exists(path):
+        log("PRECEDENT SCOUT MISSING: " + fid + " — continuing without precedent signal")
+    apply_precedent_scout_output(SCRATCHPAD, scout_manifest)
+
   // ═══ SCORE all findings ═══
   // NOTE: Sibling Propagation merged back into Validation Sweep as CHECK 9.
   // Saves 1 depth budget slot. Validation Sweep already reads findings_inventory.md.
@@ -277,9 +297,13 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
     write {SCRATCHPAD}/adaptive_loop_log.md (1 iteration, exit: Core mode - no iter 2-3)
     goto DONE
 
-  // MANDATORY (Thorough only): Always proceed to iteration 2 if uncertain findings exist AND
-  // any uncertain finding has severity Medium or above. Skip iteration 2 ONLY IF all uncertain
-  // findings are Low/Info severity. "Pragmatic" skips are PROHIBITED for Medium+ uncertain findings.
+  // ═══ ITERATION 2 GATE (mechanical) ═══
+  // See rules/phase4-confidence-scoring.md Convergence Criteria #3a.
+  iter2_required = any(f.severity in {Medium, High, Critical} for f in uncertain)
+  if not iter2_required:
+    write {SCRATCHPAD}/adaptive_loop_log.md (1 iteration, exit: all uncertain are Low/Info)
+    goto DONE
+  // Skipping iteration 2 when iter2_required is true is a workflow violation.
 
   // ═══ ITERATION 2: Micro-Niche Targeted Depth (Thorough only) ═══
   // Instead of spawning broad domain agents with up to 5 findings each,
@@ -317,7 +341,9 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   if len(still_uncertain) == 0 OR depth_spawns_used >= max_depth_spawns:
     write {SCRATCHPAD}/adaptive_loop_log.md (2 iterations, exit reason)
     goto DONE
-  if no_confidence_improvement(still_uncertain):
+  // progress(iter_2) = at least one uncertain Medium+ finding's composite increased by >= 0.10
+  // driven by NEW evidence (AD-5). See rules/phase4-confidence-scoring.md Convergence Criteria #3.
+  if not progress_since_previous_iteration(still_uncertain, min_delta=0.10, require_new_evidence=true):
     for f in still_uncertain: f.verdict = CONTESTED
     write {SCRATCHPAD}/adaptive_loop_log.md (2 iterations, exit: no progress)
     goto DONE

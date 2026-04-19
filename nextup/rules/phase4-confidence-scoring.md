@@ -58,8 +58,9 @@ Spawn highest-priority domains first within remaining budget. This ensures a Cri
 
 1. **Hard iteration cap**: Maximum 3 iterations (iteration 1 = full coverage, iterations 2-3 = targeted)
 2. **Dynamic spawn cap**: `depth_floor = 12 + max(0, 4 - actual_breadth_count)`, then `max_depth_spawns = min(max(depth_floor, ceil(total_findings / 5) + 7), 20)`. Simple codebases (2 breadth agents) get floor=14. Examples: 2 breadth + 20 findings → 14, 4 breadth + 20 findings → 12, 4 breadth + 40 findings → 15, any + 68 findings → 20 (cap).
-3. **Progress check**: If NO finding's confidence improved in an iteration → exit loop early
-3a. **Iteration 2 skip policy**: Iteration 2 may ONLY be skipped if all UNCERTAIN findings are Low/Info severity. If ANY uncertain finding is Medium or above, iteration 2 is MANDATORY. "Pragmatic" skips of iteration 2 for Medium+ findings are a workflow violation.
+3. **Progress check** (mechanical, not subjective): Define `progress(iter_N)` = true if at least one uncertain Medium+ finding's composite confidence increased by >= 0.10 between iter_{N-1} and iter_N, where the increase was driven by NEW evidence per AD-5 (a new code reference, a new MCP output, or a new production verification result not present in the prior iteration's scoring input). Re-wording without new evidence does NOT count as progress. If `progress(iter_N)` is false → exit loop early (force remaining uncertain to CONTESTED after iteration 3).
+3a. **Iteration 2 gate** (Thorough mode, mechanical): Iteration 2 fires iff `exists f in uncertain s.t. f.severity in {Medium, High, Critical}`. The orchestrator computes this boolean BEFORE deciding whether to spawn iteration 2 agents. If the boolean is false (all uncertain are Low/Info), iteration 2 is skipped (legitimate). If the boolean is true and iteration 2 is NOT spawned, it is a workflow violation — log to `{SCRATCHPAD}/violations.md` and still spawn iteration 2.
+3b. **Iteration 3 gate** (Thorough mode, mechanical): Iteration 3 fires iff iteration 2 ran AND `progress(iter_2)` is true AND `max_depth_spawns` is not yet exhausted. If `progress(iter_2)` is false, remaining uncertain findings are forced to CONTESTED and the loop exits.
 4. **Zero uncertain**: If 0 findings score < 0.7 after any iteration → exit loop
 5. **Forced CONTESTED**: After all iterations, any finding still < 0.4 → forced to CONTESTED verdict
 6. **Oscillation detection**: If >50% of score changes in iteration N are reversals (a finding that went up now goes down, or vice versa) → classify as OSCILLATORY → force all uncertain to CONTESTED, exit loop
@@ -164,8 +165,20 @@ Before spawning, the orchestrator reads `{SCRATCHPAD}/build_status.md` for `RAG_
 Task(subagent_type="general-purpose", model="sonnet", prompt="
 You are the RAG Validation Sweep Agent.
 
+## Seed context (read BEFORE making any MCP call)
+Read {SCRATCHPAD}/meta_buffer.md first. This file was produced by Agent 1A during Phase 1 recon and contains pre-fetched RAG context:
+- Common vulnerabilities for this protocol type
+- Attack vectors
+- Root-cause analyses
+- Attack-pattern questions
+If meta_buffer.md already contains a relevant common_vulnerabilities / attack_vectors entry for a finding's vulnerability class, REUSE that data instead of re-querying the MCP. Note the reuse as `[RAG: SEED]` for that finding.
+If meta_buffer.md is missing OR contains `## RAG: UNAVAILABLE`, skip reuse and proceed to step 1 below — but do NOT treat this as an error (see rag_status.md check below).
+
+## Mode check
+Read {SCRATCHPAD}/rag_status.md if it exists. If it contains `RAG_DISABLED_BY_MODE: light`, this is an intentional Light-mode skip; write floor scores (0.3) with note `[RAG: LIGHT_MODE_SKIP]` and return. Do NOT run WebSearch fallback in this case; Light mode does not use RAG Match axis.
+
 ## Your Task
-For EVERY finding in {SCRATCHPAD}/findings_inventory.md:
+For EVERY finding in {SCRATCHPAD}/findings_inventory.md that was NOT satisfied by meta_buffer.md seed reuse:
 1. Call validate_hypothesis(hypothesis='{finding title}: {1-line root cause}')
 2. Call mcp__unified-vuln-db__search(query='{vulnerability class}', n_results=10, filters={"sources": ["solodit"]}) against the local CSV-backed index
 3. Record the result
@@ -185,9 +198,9 @@ The unified-vuln-db MCP is local-only (CSV-backed BM25 index; no live API). If t
 
 ## Output
 Write to {SCRATCHPAD}/rag_validation.md:
-| Finding ID | validate_hypothesis Score | Local Search Matches | Final RAG Score | Notes |
+| Finding ID | validate_hypothesis Score | Local Search Matches | Final RAG Score | Source ([SEED]=meta_buffer reuse, [MCP]=live MCP, [WEB]=WebSearch, [FLOOR]=failed) | Notes |
 
-Return: 'DONE: {N} findings validated, {E} tool errors, fallback={MCP|WEB|NONE}'
+Return: 'DONE: {N} findings validated, {S} from seed reuse, {E} tool errors, fallback={MCP|WEB|NONE|LIGHT_MODE_SKIP}'
 ")
 ```
 

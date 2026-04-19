@@ -47,23 +47,25 @@ One line per step. Expanded section below.
 - Step 4a.5: Semantic invariant pre-computation (Pass 1 Core + Thorough, Pass 2 Thorough).
 - Step 4a.NX: NEXTUP seeder emits `investigation_targets.md` (see Part 2).
 - Step 4b iter 1: Spawn 4 depth agents + 3 scanners + validation sweep + niche agents.
-- Step 4b.4: Injectable example-precedent scout (Core, Thorough). One haiku per injectable finding; sweeps the scope for OTHER locations matching the skill's real-world examples.
-- Step 4b scoring: Haiku scoring agent writes `confidence_scores.md` (2-axis Core, 4-axis Thorough).
-- Step 4b iter 2: Devil's Advocate depth agents for uncertain findings (Thorough only).
-- Step 4b iter 3: Final targeted pass, force remaining low-confidence to CONTESTED (Thorough only).
+- Step 4b.4: Injectable example-precedent scout (Core, Thorough). One haiku per injectable finding, writes `precedent_{id}.md`, post-processed into findings_inventory.md as new candidates or Related locations footers. Feeds the Axis 4 RAG Match precedent bonus.
+- Step 4b scoring: Haiku scoring agent writes `confidence_scores.md` (2-axis Core, 4-axis Thorough). Reads precedent output for Axis 4 bonus.
+- Step 4b iter 2 gate (mechanical): `iter2_required = exists uncertain f with severity >= Medium`. Fires Devil's Advocate depth agents only when the gate passes (Thorough only).
+- Step 4b iter 3 gate (mechanical): Fires iff `progress(iter_2)` = at least one uncertain Medium+ finding's composite confidence rose by >= 0.10 with NEW evidence per AD-5 (Thorough only). Otherwise remaining uncertain are forced to CONTESTED.
 - Step 4b design stress: Unconditional 1-slot Design Stress Testing Agent (Thorough only).
 - Step 4b fuzz (EVM Thorough): Invariant fuzz campaign + Medusa stateful fuzz in parallel.
 - Step 4b.5: RAG validation sweep (Core, Thorough).
 - Step 4c: Chain analysis, enabler enumeration, variable-finding cross-reference.
 
 ### Phase 5: Pre-Screen, Verification, Validation, Escalation
-- Step 5 pre Step 0a: Early exit (remove broken file:line refs as FALSE_POSITIVE, cap trusted-actor findings at Low).
-- Step 5 pre Step 0b: Invalidation selector (haiku agent picks 2-3 generic invalidations per finding).
-- Step 5 pre Step 0c: External protocol research (sonnet agent, conditional on external deps).
+- Step 5 pre Step 0a: Early exit writes `prescreen_early_exit.md` (broken refs → FALSE_POSITIVE, pure trusted-actor → Low cap).
+- Step 5 pre Step 0a.filter: MANDATORY orchestrator step that builds `verification_queue.md` = hypotheses.md MINUS FALSE_POSITIVE. Phase 5 verifier spawning uses the queue, not hypotheses.md.
+- Step 5 pre Step 0b: Invalidation selector writes `prescreen_invalidation_hints.md` (haiku, 2-3 hints per surviving finding).
+- Step 5 pre Step 0c: External protocol research writes `prescreen_external_research.md` (sonnet, conditional on external deps).
+- Step 5 pre Step 0d: MANDATORY orchestrator substitution of `{INVALIDATION_HINTS_FOR_THIS_FINDING}`, `{EXTERNAL_RESEARCH_FOR_THIS_FINDING}`, `{IF_PRESCREEN_HINTS_EXIST}` into each verifier prompt before spawn. Unsubstituted placeholders are a workflow violation.
 - Step 5: Verifiers run PoCs in project test harness (Medium+ for Light / Core, all severities for Thorough).
 - Step 5.1: Skeptic-Judge adversarial re-verify for HIGH / CRIT (Thorough only).
-- Step 5.2: Final opus validation, one agent per surviving finding.
-- Step 5.5: Post-verification extraction of `[VER-NEW-*]` observations into new hypotheses.
+- Step 5.2: Final opus validation, one agent per surviving finding. Orchestrator enforces override protection: `[POC-PASS]` + INVALIDATED → CONTESTED.
+- Step 5.5: Post-verification extraction of `[VER-NEW-*]` observations. Medium+ observations MUST re-enter Phase 5 PoC verification before flowing to 5.6 / 5.7. Low / Info get `[VER-NEW-UNVERIFIED]` and count as weak-evidence inputs for compound escalation.
 - Step 5.6: Individual Low escalation (Wave 1 proposes, Wave 2 verifies).
 - Step 5.7: Compound escalation of Low / Info into pairs and triples, then verify.
 
@@ -236,7 +238,7 @@ Pass 1 (Core, Thorough) enumerates write sites, defines semantic invariants, gro
 Files: `state_variables.md`, `function_list.md`, `semantic_invariants.md`.
 
 #### Step 4a.NX: NEXTUP seeder
-Always runs. Invokes the NEXTUP skill in seeder mode (see Part 2). Extracts puzzle pieces, combines them statically, eliminates impossible combos, then writes `investigation_targets.md` with per-depth-domain investigation questions. Injected into each depth agent prompt at Step 4b.
+Always runs. Invokes the NEXTUP skill in seeder mode (see Part 2). Extracts puzzle pieces, combines them statically, eliminates impossible combos, then writes `investigation_targets.md` with per-depth-domain investigation questions. Routing from `combo.categories` to depth domain is a deterministic top-down table (priority: contains D → depth-external; contains A07 → depth-edge-case; 2+ of {A,E,G} → depth-token-flow; 2+ of {C,F,H} → depth-state-trace; A+I or E+I → depth-edge-case; fallback → depth-state-trace). No per-piece scoring required. Injected into each depth agent prompt at Step 4b.
 Files: `SKILL.md` (the skill entry point), `extraction/extract_agent.md`, `extraction/patterns/*.md`, `taxonomy/{LANGUAGE}.json`, `combinator/combine_{LANGUAGE}.py`, `combinator/rules/{LANGUAGE}.json`, `combinator/weights/{LANGUAGE}.json`, `combinator/shared.py`, `{SCRATCHPAD}/nextup/pieces.json`, `{SCRATCHPAD}/nextup/combos_ranked.json`, `{SCRATCHPAD}/nextup/investigation_targets.md`.
 Tools: `Agent`, `Bash` (Python combinator), `Read`, `Write`.
 
@@ -254,26 +256,26 @@ Spawns one haiku agent that reads all depth outputs and writes `confidence_score
 Files: `rules/phase4-confidence-scoring.md`, `confidence_scores.md`.
 
 #### Step 4b iter 2 (Thorough only)
-Spawns Devil's Advocate depth agents for ALL uncertain Medium+ findings. Agents are structurally adversarial (DA role). Anti-dilution: evidence-only finding cards, max 5 per agent. Re-scores with new-evidence-only rule. Classifies loop dynamics as CONTRACTIVE, OSCILLATORY, or EXPLORATORY; OSCILLATORY forces CONTESTED and exits.
-Files: `rules/phase4-confidence-scoring.md`.
+Mechanical gate: `iter2_required = exists uncertain f with severity in {Medium, High, Critical}`. If true, spawns Devil's Advocate depth agents for ALL uncertain Medium+ findings. Agents are structurally adversarial (DA role). Anti-dilution: evidence-only finding cards, max 5 per agent. Re-scores with new-evidence-only rule (AD-5). Classifies loop dynamics as CONTRACTIVE, OSCILLATORY, or EXPLORATORY; OSCILLATORY forces CONTESTED and exits. Skipping iter 2 when the gate is true is a workflow violation.
+Files: `rules/phase4-confidence-scoring.md` (Convergence Criteria #3a).
 
 #### Step 4b iter 3 (Thorough only)
-Final targeted pass if iter 2 made progress. Forces any remaining `< 0.4` confidence findings to CONTESTED verdict. Writes `adaptive_loop_log.md` with iteration count and exit reason.
-Files: `adaptive_loop_log.md`.
+Mechanical progress gate: `progress(iter_2) = at least one uncertain Medium+ finding's composite confidence increased by >= 0.10 with NEW evidence per AD-5`. Fires iff iter 2 ran AND progress was made AND budget is not exhausted. Forces any remaining `< 0.4` confidence findings to CONTESTED. Writes `adaptive_loop_log.md` with iteration count and exit reason.
+Files: `rules/phase4-confidence-scoring.md` (Convergence Criteria #3, #3b), `adaptive_loop_log.md`.
 
 #### Step 4b Design Stress Testing (Thorough only)
 One UNCONDITIONAL reserved slot. The Design Stress Testing Agent runs regardless of budget. Tests whether the protocol's invariants hold under adversarial configuration at boundaries.
 Files: `rules/phase4-confidence-scoring.md`.
 
 #### Step 4b EVM fuzz checkpoint (Thorough, EVM only)
-Two parallel agents: invariant fuzz campaign (5-min built-in timeout) and Medusa stateful fuzzer (15-min timeout, only if `medusa` is installed). Writes `invariant_fuzz_results.md` and `medusa_fuzz_findings.md`. Missing results without a failure reason logged to `{SCRATCHPAD}/violations.md` counts as a workflow violation.
-Files: `prompts/evm/phase4b-invariant-fuzz.md`, `prompts/evm/phase4b-loop.md` (Medusa section).
+Two parallel agents: invariant fuzz campaign (5-min built-in timeout) and Medusa stateful fuzzer (15-min timeout). `MEDUSA_AVAILABLE` is read from `{SCRATCHPAD}/build_status.md`, where it was written by Step 0a's toolchain probe (`command -v medusa`). A missing flag is logged as `MEDUSA_UNAVAILABLE` to `violations.md`. Writes `invariant_fuzz_results.md` and `medusa_fuzz_findings.md`. Missing results without a failure reason counts as a workflow violation.
+Files: `prompts/evm/phase4b-invariant-fuzz.md`, `prompts/evm/phase4b-loop.md` (Medusa section), `build_status.md`.
 Tools: `forge test --match-contract Invariant`, `medusa fuzz`.
 
 #### Step 4b.5: RAG validation sweep (Core, Thorough)
-One sonnet agent runs `mcp__unified-vuln-db__*` against every Medium+ finding to look for precedents. On MCP failure, falls back to `WebSearch`. On double failure, floors RAG scores at 0.3. Writing floor scores without attempting the sweep is a VIOLATION.
-Files: `rules/phase4-confidence-scoring.md` (Phase 4b.5 section).
-Tools: `mcp__unified-vuln-db__*` (CSV-backed), `WebSearch`.
+One sonnet agent. First reads `{SCRATCHPAD}/meta_buffer.md` (produced by recon Agent 1A) and reuses any matching common_vulnerabilities / attack_vectors entries — tagged `[RAG: SEED]` — to avoid redundant MCP calls. For findings not satisfied by seed reuse, runs `mcp__unified-vuln-db__*` against the local CSV-backed index. On MCP failure, falls back to WebSearch. On double failure, floors RAG scores at 0.3. Reads `{SCRATCHPAD}/rag_status.md`: if it contains `RAG_DISABLED_BY_MODE: light`, writes floor scores tagged `[RAG: LIGHT_MODE_SKIP]` without running WebSearch. Writing floor scores without attempting the sweep in Core / Thorough is a VIOLATION.
+Files: `rules/phase4-confidence-scoring.md` (Phase 4b.5 section), `meta_buffer.md`, `rag_status.md`, `build_status.md`, `rag_validation.md`.
+Tools: `mcp__unified-vuln-db__*` (CSV-backed), `WebSearch`, `Read`.
 Datasets: `solodit_findings.dedup.csv`.
 
 #### Step 4c: Chain analysis
@@ -283,17 +285,26 @@ Files: `rules/phase4c-chain-prompt.md`, `chain_hypotheses.md`.
 ### Audit Pipeline, Phase 5
 
 #### Step 5 pre Step 0a: Early exit
-Orchestrator inline check: for each finding, verify the referenced file and line still exist and contain the claimed code. Mark stale refs as FALSE_POSITIVE. Cap any finding whose entire attack depends on a trusted-actor action at Low.
-Files: `rules/phase5-prescreen.md`.
+Orchestrator inline check: for each finding, verify the referenced file and line still exist and contain the claimed code. Mark stale refs as FALSE_POSITIVE. Cap any finding whose entire attack depends on a trusted-actor action at Low. Writes `prescreen_early_exit.md`.
+Files: `rules/phase5-prescreen.md`, `prescreen_early_exit.md`.
 Tools: `Read`, `Grep`.
 
+#### Step 5 pre Step 0a.filter: FALSE_POSITIVE removal (MANDATORY)
+Orchestrator inline. Builds `{SCRATCHPAD}/verification_queue.md` = hypotheses.md MINUS every finding marked `EARLY_EXIT: BROKEN_REF` or `FALSE_POSITIVE`. Phase 5 spawner uses `verification_queue.md`, not hypotheses.md. FALSE_POSITIVE findings remain in hypotheses.md with their tag for the Phase 6 SUMMARY.md rejected appendix but do not consume verification budget.
+Files: `verification_queue.md`, `hypotheses.md`, `prescreen_early_exit.md`.
+
 #### Step 5 pre Step 0b: Invalidation selector
-One haiku agent, batched. Reads `rules/invalidation-library.md` and picks 2-3 most-applicable generic invalidation reasons per finding. Output becomes adversarial hints injected into the verifier prompts. Verifiers MUST address each hint during defender-perspective analysis.
-Files: `rules/invalidation-library.md`, `rules/phase5-prescreen.md`.
+One haiku agent, batched. Reads `rules/invalidation-library.md` and picks 2-3 most-applicable generic invalidation reasons per surviving finding. Writes `prescreen_invalidation_hints.md`.
+Files: `rules/invalidation-library.md`, `rules/phase5-prescreen.md`, `prescreen_invalidation_hints.md`.
 
 #### Step 5 pre Step 0c: External research (conditional)
-0 or 1 sonnet agent. Triggered only when findings reference external protocols (Chainlink, Aave, Pendle, etc.). Verifies claims via WebSearch and injects results into verifier prompts.
+0 or 1 sonnet agent. Triggered only when findings reference external protocols (Chainlink, Aave, Pendle, etc.). Verifies claims via WebSearch. Writes `prescreen_external_research.md`.
+Files: `prescreen_external_research.md`.
 Tools: `WebSearch`, `mcp__tavily-search__tavily_search`.
+
+#### Step 5 pre Step 0d: Orchestrator substitution into verifier prompts (MANDATORY)
+For each finding in `verification_queue.md`, orchestrator substitutes `{IF_PRESCREEN_HINTS_EXIST}`, `{INVALIDATION_HINTS_FOR_THIS_FINDING}`, and `{EXTERNAL_RESEARCH_FOR_THIS_FINDING}` into the verifier prompt before spawn. Spawning a verifier with any placeholder left unsubstituted is a workflow violation. Same substitution applies to Phase 5.2 Final Validation agents.
+Files: `prompts/{LANGUAGE}/phase5-verification-prompt.md`, `prescreen_invalidation_hints.md`, `prescreen_external_research.md`, `verification_queue.md`.
 
 #### Step 5: Verifiers
 Spawns one verifier per finding in scope. Light and Core verify all Medium+. Thorough verifies ALL severities with fuzz variants. Verifier must run the PoC in the project test harness (`forge test`, `cargo test`, `pytest`, `jtx::Env`, etc.). No testnet or live submissions unless the project's own CLAUDE.md permits. Output: per-finding `verify_*.md` with verdict, evidence tag (`[POC-PASS]`, `[POC-FAIL]`, `[CODE-TRACE]`, `[CONTESTED]`), and run output.
@@ -309,8 +320,8 @@ One opus agent per surviving finding (not FALSE_POSITIVE). Each renders an indep
 Files: `rules/phase5.2-final-validation.md`.
 
 #### Step 5.5: Post-verification finding extraction
-Orchestrator inline. Scans every `verify_*.md` for `[VER-NEW-*]` observations in the "New Observations" section. Adds non-duplicate observations to `hypotheses.md` with a severity from the standard matrix. These do not require re-verification.
-Files: `hypotheses.md`, `verify_*.md`.
+Orchestrator inline. Scans every `verify_*.md` for `[VER-NEW-*]` observations and assigns severity from the standard matrix. Routing: Medium+ observations MUST go through a targeted Phase 5 PoC verification pass before entering Phase 5.6 / 5.7 (the original verifier was focused on a different finding, so "trust the verifier" is not enough). Low / Info observations skip re-verification but are tagged `[VER-NEW-UNVERIFIED]` and are treated as weak-evidence inputs in Phase 5.7 compound escalation (a chain depending on them cannot be confirmed beyond Medium without Phase 5 PoC verification of the chain).
+Files: `hypotheses.md`, `verify_*.md`, `prompts/{LANGUAGE}/phase5-verification-prompt.md`.
 
 #### Step 5.6: Individual Low escalation
 Wave 1: one opus agent per Low finding proposes an upgrade to Medium+ (or REJECT). Wave 2: one opus agent per proposed upgrade independently verifies. Applies CONFIRMED / PARTIAL / REJECTED. Findings upgraded to Medium+ leave the Low pool before Phase 5.7.
