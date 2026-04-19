@@ -6,11 +6,12 @@
 
 ## EVM Skills (`{NEXTUP_HOME}/agents/skills/evm/`)
 
-> Load these when `LANGUAGE=evm`. All 18 skills use EVM/Solidity concepts.
+> Load these when `LANGUAGE=evm`. All 19 skills use EVM/Solidity concepts.
 
 | Skill | Trigger Pattern | Used By |
 |-------|-----------------|---------|
 | FLASH_LOAN_INTERACTION | FLASH_LOAN or FLASH_LOAN_EXTERNAL flag | breadth agents, depth-token-flow, depth-edge-case |
+| BIT_SHIFT_SAFETY | Always (EVM) — checked 0.8, unchecked, Yul shl/shr/sar never reverts | breadth agents, depth-edge-case |
 | ORACLE_ANALYSIS | ORACLE flag | breadth agents, depth-external, depth-edge-case |
 | TOKEN_FLOW_TRACING | BALANCE_DEPENDENT flag | depth-token-flow, breadth agents |
 | ZERO_STATE_RETURN | ERC4626/first-depositor | depth-edge-case |
@@ -31,11 +32,12 @@
 
 ## Solana Skills (`{NEXTUP_HOME}/agents/skills/solana/`)
 
-> Load these when `LANGUAGE=solana`. All 20 skills use Solana/Anchor concepts.
+> Load these when `LANGUAGE=solana`. All 21 skills use Solana/Anchor concepts.
 
 | Skill | Trigger Pattern | Used By |
 |-------|-----------------|---------|
 | ACCOUNT_VALIDATION | Always (Solana) | breadth agents, depth agents |
+| BIT_SHIFT_SAFETY | Always (Solana) — release-mode silent wrap, checked_shl family, shlw helpers | breadth agents, depth-edge-case |
 | CPI_SECURITY | CPI flag | breadth agents, depth-external |
 | PDA_SECURITY | PDA flag | breadth agents, depth-state-trace |
 | ACCOUNT_LIFECYCLE | ACCOUNT_CLOSING flag | breadth agents, depth-edge-case |
