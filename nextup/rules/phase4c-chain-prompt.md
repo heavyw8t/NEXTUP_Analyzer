@@ -180,7 +180,7 @@ Rules: List pairs where at least one has a postcondition or missing precondition
 For each chain hypothesis:
 1. assess_hypothesis_strength(hypothesis='Chain: {B title} enables {A title}')
 2. get_similar_findings(pattern='{combined attack description}')
-3. If local results < 5: search_solodit_live(keywords='{chain pattern}', impact=['HIGH','MEDIUM'], quality_score=3, max_results=20)
+3. If local results < 5: fall back to `mcp__tavily-search__tavily_search` or WebSearch
 4. If historical precedent found → upgrade chain severity
 
 ## Output
@@ -304,7 +304,7 @@ Chain analysis upgraded these findings:
 For EACH upgraded finding:
 1. Re-analyze with the CHAIN CONTEXT (the enabler finding is now known)
 2. Trace the COMPLETE attack sequence (enabler → blocked finding → impact)
-3. Validate the chain with RAG: search_solodit_live(keywords='<chain pattern>')
+3. Validate the chain with RAG: `mcp__unified-vuln-db__get_similar_findings(pattern='<chain pattern>')` + WebSearch fallback if thin
 4. Compute impact with REAL constants for the COMBINED attack
 5. Apply Rule 10: Use worst realistic operational parameters for severity
 

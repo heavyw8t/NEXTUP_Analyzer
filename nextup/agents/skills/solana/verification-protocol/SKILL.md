@@ -209,16 +209,12 @@ mcp__unified-vuln-db__get_similar_findings(pattern="{vulnerability description}"
 mcp__unified-vuln-db__validate_hypothesis(hypothesis="{finding summary}")
 ```
 
-### Step 4: Live Search for Solana-Specific Precedents
+### Step 4: Web Search for Solana-Specific Precedents
 ```
-mcp__unified-vuln-db__search_solodit_live(
-  keywords="{solana vulnerability pattern}",
-  impact=["HIGH", "CRITICAL"],
-  tags=["Access Control", "Logic Error"],
-  language="Rust",
-  quality_score=3,
-  max_results=15
-)
+// The local CSV has 432 Solana rows (plus 1,194 non-Solana Rust rows).
+// When Steps 1-3 return thin results, expand via web search.
+mcp__tavily-search__tavily_search(query="solana anchor {vulnerability pattern} audit finding vulnerability exploit")
+// If tavily unavailable, fall back to WebSearch with the same query.
 ```
 
 Document RAG evidence in output:

@@ -8,15 +8,15 @@
 >
 > | Agent | Tasks | Model | Why Separate |
 > |-------|-------|-------|-------------|
-> | **1A: RAG-only** | TASK 0 steps 1-5 (local vuln-db) | **sonnet** | Mechanical query+format task against local ChromaDB index. |
+> | **1A: RAG-only** | TASK 0 steps 1-5 (local vuln-db) | **sonnet** | Mechanical query+format task against local CSV-backed BM25 index. |
 > | **1B: Docs + External + Fork** | TASK 0 step 6 (fork ancestry), TASK 3, TASK 11 | opus | Tavily web search can hang; separate from RAG |
 > | **2: Build + Slither + Tests** | TASK 1, 2, 8, 9 | **sonnet** | Build/compile is blocking; Slither is fail-fast. Sonnet sufficient - tool execution + output formatting. |
 > | **3: Patterns + Surface + Templates** | TASK 4, 5, 6, 7, 10 | opus | Pure codebase analysis, no external deps. Opus needed - attack surface + template selection requires reasoning. |
 >
-> **RAG POLICY (v1.1.0)**:
-> Agent 1A is a normal inline agent. The orchestrator spawns it alongside Agents 1B, 2, and 3 and awaits all four. Local ChromaDB queries are fast, so there is no need to run 1A in the background.
-> - If Agent 1A's probe call to `mcp__unified-vuln-db__get_knowledge_stats` fails (MCP not installed, ChromaDB empty, schema mismatch), Agent 1A sets `RAG_TOOLS_AVAILABLE=false`, writes a minimal `meta_buffer.md` with `# Meta-Buffer\n## RAG: UNAVAILABLE - MCP probe failed\nPhase 4b.5 RAG Validation Sweep will compensate via WebSearch fallback.`, and returns.
-> - Live Solodit API is disabled by default; the MCP only exposes `search_solodit_live` when started with `ENABLE_LIVE_SOLODIT=1`. All queries here use the local `mcp__unified-vuln-db__search` tool.
+> **RAG POLICY (v2.0.0-csv)**:
+> Agent 1A is a normal inline agent. The orchestrator spawns it alongside Agents 1B, 2, and 3 and awaits all four. Local CSV-backed queries are in-process (no embedding model, no network), so there is no need to run 1A in the background.
+> - If Agent 1A's probe call to `mcp__unified-vuln-db__get_knowledge_stats` fails (MCP not installed, CSV index manifest missing, schema mismatch), Agent 1A sets `RAG_TOOLS_AVAILABLE=false`, writes a minimal `meta_buffer.md` with `# Meta-Buffer\n## RAG: UNAVAILABLE - MCP probe failed\nPhase 4b.5 RAG Validation Sweep will compensate via WebSearch fallback.`, and returns.
+> - The MCP serves only the local CSV-backed index (19,370 MEDIUM + HIGH findings, 12 language shards). There is no live Solodit fallback inside the MCP; when local results are thin, use `WebSearch` / `mcp__tavily-search__tavily_search`.
 >
 > Agent 1A writes: `meta_buffer.md`
 > Agent 1B writes: `design_context.md`, `external_production_behavior.md`, fork section of `meta_buffer.md`
@@ -77,9 +77,9 @@ Execute these tasks IN ORDER:
    → For each external dependency (e.g., 'staking receipt donation', 'cross-chain timing')
 3. mcp__unified-vuln-db__get_root_cause_analysis(bug_class='{detected pattern}')
 
-**Batch 2** - call ALL of these in a single message (local ChromaDB search):
-4. **MANDATORY**: mcp__unified-vuln-db__search(query='{DeFi/Bridge/etc.} {relevant tags} Solidity quality findings', n_results=20, filters={"sources": ["solodit"]})
-5. If SEMI_TRUSTED_ROLE detected: mcp__unified-vuln-db__search(query='reward compound timing front-run keeper', n_results=15, filters={"sources": ["solodit"], "severities": ["high", "medium"]})
+**Batch 2** - call ALL of these in a single message (local CSV-backed BM25):
+4. **MANDATORY**: mcp__unified-vuln-db__get_similar_findings(pattern='{DeFi/Bridge/etc.} {relevant tags} Solidity quality findings', limit=20)
+5. If SEMI_TRUSTED_ROLE detected: mcp__unified-vuln-db__get_similar_findings(pattern='reward compound timing front-run keeper', limit=15, severity='high')
 
 ### Step 6: Fork Ancestry Research
 Read {NEXTUP_HOME}/agents/skills/evm/fork-ancestry/SKILL.md and execute all 4 steps:

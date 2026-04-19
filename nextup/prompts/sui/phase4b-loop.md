@@ -469,7 +469,7 @@ For EACH finding above:
 2. Make your OWN MCP tool calls:
    - Use Read/Grep tools for the relevant functions
    - validate_hypothesis() for RAG validation
-   - search_solodit_live() if local results < 5
+   - WebSearch / tavily_search if local results < 5
 3. Answer the investigation question with NEW evidence
 4. Produce a verdict: CONFIRMED / PARTIAL / REFUTED / CONTESTED
 5. If you discover a NEW attack path not described in the finding card: document it as [DEPTH-{TYPE}-IT{N}-M]

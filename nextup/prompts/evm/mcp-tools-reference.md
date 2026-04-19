@@ -39,60 +39,40 @@
 
 ## unified-vuln-db - Your Attack Pattern Library
 
-### Local Database Tools (~3.4k indexed findings)
+### Local CSV-backed Index (19,370 findings, MEDIUM + HIGH only)
+
+All queries hit an in-process BM25 index over a curated Solodit-derived CSV. No network calls, no ChromaDB. Per-language shards (Solidity 16,814, Rust 1,194, Solana 432, Go 402, Vyper 138, Move 128, TypeScript 102, JavaScript 58, Cairo 49, Python 25, C++ 22, C 6).
 
 | Tool | What It Gives You | When to Use |
 |------|-------------------|-------------|
-| `get_root_cause_analysis(bug_class)` | Why specific bug classes occur | Step 1c - prime your analysis |
-| `get_attack_vectors(bug_class)` | How exploits work mechanically | Depth agents - understand exploit mechanics |
-| `analyze_code_pattern(pattern, code_context)` | Pattern matching against known vulns | Step 6 - validate hypotheses |
+| `get_root_cause_analysis(bug_class)` | Summary excerpts of past findings matching the bug class | Step 1c - prime your analysis |
+| `get_attack_vectors(bug_class)` | Similar findings clustered by attack mechanism | Depth agents - understand exploit mechanics |
+| `analyze_code_pattern(pattern, code_context, protocol_type)` | BM25 matches with reasoning material | Step 6 - validate hypotheses |
 | `validate_hypothesis(hypothesis)` | Cross-reference against known bugs | Step 6 - before verification |
-| `get_similar_findings(description)` | Similar bugs from other audits | Step 6 - calibrate severity |
+| `get_similar_findings(pattern)` | Top-k BM25 row dicts | Step 6 - calibrate severity |
+| `get_common_vulnerabilities(protocol_type)` | Tag/severity aggregation for a protocol type or language | Pre-depth scoping |
+| `get_exploitation_requirements(vulnerability_type)` | Keyword-extracted pre-conditions | Depth reasoning |
+| `get_reachability_evidence(sink_type)` / `get_controllability_evidence(input_type)` | Summary-level evidence strings | Reasoning about control paths |
+| `get_impact_precedents(impact_type)` | Severity + tag distribution over matches | Severity calibration |
+| `assess_hypothesis_strength(hypothesis)` | Score + strength from validate_hypothesis + severity weighting | Verification confidence |
+| `get_knowledge_stats()` | Index size, by-language and by-severity breakdowns | Agent 1A readiness probe |
+| `get_poc_template(bug_class, framework)` | Static PoC skeleton; `historical_examples=0` under CSV | PoC drafting |
 
-**Bug classes**: reentrancy, access-control, arithmetic-precision, oracle-manipulation, flash-loan, dos
+**Unavailable under CSV** (return explicit `{error, fallback}` — use `get_similar_findings` + WebSearch instead):
+- `get_similar_exploit_code(...)` — CSV has no PoC source code
+- `get_fix_patterns(...)` — CSV has no recommendations or diff patches
 
-### Live Solodit API (50k+ findings - MANDATORY for comprehensive analysis)
+**Bug classes** (seed terms that yield results): reentrancy, access-control, arithmetic-precision, arithmetic-overflow, oracle-manipulation, flash-loan, dos, first-depositor, share-inflation, price-manipulation, signature, front-running, governance, bridge, cross-chain, initialization, upgrade.
 
-| Tool | What It Gives You | When to Use |
-|------|-------------------|-------------|
-| `search_solodit_live(...)` | Full Solodit database search | **MANDATORY** during hypothesis validation and deep dives |
+**Filter semantics**:
+- `filters.protocol_types`: language slug (`Solidity`/`Vyper`/`Rust`/`Solana`/`Move`/`Cairo`/`Go`/`C`/`C++`/`TypeScript`/`JavaScript`/`Python`) routes to language shard; other values substring-match `protocol_category`.
+- `filters.severities`: accepts `high`, `medium`; `critical`, `low`, `info` are dropped silently.
+- `filters.sources`: ignored (Solodit is the only source).
+- `filters.has_poc` / `has_diff`: always return empty.
 
-**MANDATORY Usage - Call `search_solodit_live` when:**
-1. Local search returns < 5 results → Expand search
-2. Validating HIGH/CRITICAL hypothesis → Cross-reference comprehensively
-3. Protocol-specific deep dive → Search by protocol name
-4. Understanding attack patterns → Search by vulnerability tags
+**Common tags available as `filters.tag` substring**: Reentrancy, Oracle, Access Control, Flash Loan, Front-running, Price Manipulation, Logic Error, DOS, Griefing, Signature, Upgrade, Initialization, Precision Loss, Rounding, First Depositor, Share Inflation, ERC4626, Liquidation, Governance, Cross-chain, Bridge, Slippage, Timestamp, Randomness, Delegatecall.
 
-**Parameters:**
-```
-search_solodit_live(
-  keywords="first depositor inflation",     # Free-text search
-  impact=["HIGH", "MEDIUM"],                # Severity filter
-  tags=["First Depositor", "ERC4626"],      # Solodit vulnerability tags
-  protocol="{PROTOCOL_NAME}",                # Protocol name (partial match)
-  protocol_category=["DeFi"],               # Category filter (array)
-  firms=["{RELEVANT_FIRM}"],                # Audit firm filter
-  language="Solidity",                      # Language: Solidity/Rust/Cairo/Move
-  quality_score=3,                          # Min quality (0-5), use >=3 for good findings
-  rarity_score=3,                           # Min rarity (0-5), unique patterns
-  min_finders=1, max_finders=1,            # Solo finds only (hardest bugs)
-  reported="90",                            # Time: 30/60/90/alltime
-  sort_by="Quality",                        # Quality/Recency/Rarity
-  sort_direction="Desc",                    # Desc/Asc
-  max_results=20                            # Up to 50
-)
-```
-
-**Pro tips for better recall:**
-- Use `quality_score=3` to filter noisy/low-quality findings
-- Use `language="Solidity"` to avoid cross-language noise (important for non-EVM searches)
-- Use `max_finders=1` to find solo discoveries (often the hardest, most unique bugs)
-- Combine `protocol_category` + `tags` for targeted domain searches
-
-**Common Solodit Tags**: Reentrancy, Oracle, Access Control, Flash Loan, Front-running,
-Price Manipulation, Logic Error, DOS, Griefing, Signature, Upgrade, Initialization,
-Precision Loss, Rounding, First Depositor, Share Inflation, ERC4626, Liquidation,
-Governance, Cross-chain, Bridge, Slippage, Timestamp, Randomness, Delegatecall
+When local results are thin (< 5 hits), expand via `mcp__tavily-search__tavily_search` or WebSearch rather than a live Solodit call.
 
 ## Static Analysis Escalation Ladder
 

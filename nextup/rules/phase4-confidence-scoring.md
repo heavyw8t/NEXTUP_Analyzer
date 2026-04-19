@@ -167,19 +167,19 @@ You are the RAG Validation Sweep Agent.
 ## Your Task
 For EVERY finding in {SCRATCHPAD}/findings_inventory.md:
 1. Call validate_hypothesis(hypothesis='{finding title}: {1-line root cause}')
-2. Call mcp__unified-vuln-db__search(query='{vulnerability class}', n_results=10, filters={"sources": ["solodit"]}) against the local ChromaDB index
+2. Call mcp__unified-vuln-db__search(query='{vulnerability class}', n_results=10, filters={"sources": ["solodit"]}) against the local CSV-backed index
 3. Record the result
 
 If a tool call fails, record [RAG: TOOL_ERROR] for that finding - do NOT silently skip.
 
 ## Fallback Chain (if local MCP unavailable or index empty)
-The unified-vuln-db MCP is local-only by default (live Solodit API is gated behind ENABLE_LIVE_SOLODIT=1 on the MCP server). If the local tools fail or the ChromaDB index returns nothing useful, walk this chain:
+The unified-vuln-db MCP is local-only (CSV-backed BM25 index; no live API). If the local tools fail or the CSV-backed index returns nothing useful, walk this chain:
 1. Try get_similar_findings(pattern='{finding description}')
 2. If that also fails: try get_common_vulnerabilities(category='{vulnerability class}')
 3. If ALL local MCP tools fail or the index is empty: use WebSearch fallback, search 'site:solodit.xyz {vulnerability class} {key term}' for each finding and extract match count + relevance
 4. If WebSearch also fails: record [RAG: ALL_TOOLS_FAILED] and score = 0.3
 
-**IMPORTANT**: If the FIRST MCP call fails with a schema/API error or the index is missing, assume ALL MCP calls will fail. Switch immediately to WebSearch fallback for remaining findings instead of retrying each one. This prevents N cache misses on a cold ChromaDB.
+**IMPORTANT**: If the FIRST MCP call fails with a schema/API error or the index is missing, assume ALL MCP calls will fail. Switch immediately to WebSearch fallback for remaining findings instead of retrying each one. This prevents N failed calls against a missing CSV index.
 
 **IMPORTANT**: If MCP tools SUCCEED but return 0 supporting examples AND 0 solodit matches for the first 3 findings, treat this as 'empty database' and run WebSearch as a COMPLEMENT for all remaining findings (search '{vulnerability class} {protocol type} audit' and 'site:solodit.xyz {key term}'). MCP success with empty results is functionally equivalent to MCP failure for novel protocols.
 

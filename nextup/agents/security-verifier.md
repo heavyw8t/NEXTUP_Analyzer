@@ -14,7 +14,8 @@ tools:
   - mcp__unified-vuln-db__validate_hypothesis
   - mcp__unified-vuln-db__get_similar_findings
   - mcp__unified-vuln-db__assess_hypothesis_strength
-  - mcp__unified-vuln-db__search_solodit_live
+  - WebSearch
+  - mcp__tavily-search__tavily_search
 ---
 
 # Security Verifier
@@ -39,11 +40,11 @@ Before writing ANY test, validate the hypothesis against historical exploits:
 1. assess_hypothesis_strength(hypothesis="<bug description>")
    → If confidence < 0.5: reconsider if bug is real
 
-2. get_similar_findings(description="<bug mechanism>")
+2. get_similar_findings(pattern="<bug mechanism>")
    → Study how similar bugs were exploited historically
 
-3. search_solodit_live(keywords="<pattern>", impact=["HIGH", "MEDIUM"], max_results=10)
-   → If local DB has < 5 results, expand search
+3. If local results < 5: WebSearch / mcp__tavily-search__tavily_search for the pattern
+   → Expand beyond the local 19,370-row CSV when coverage is thin
 ```
 
 **Record RAG evidence in your output:**

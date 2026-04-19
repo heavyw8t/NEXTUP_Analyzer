@@ -2,7 +2,7 @@
 name: depth-external
 description: "External call side effects, cross-chain timing windows, MEV analysis"
 model: opus
-tools: [Read, Write, Grep, mcp__slither-analyzer__get_function_source, mcp__slither-analyzer__get_function_callees, mcp__solana-fender__security_check_program, mcp__solana-fender__security_check_file, mcp__unified-vuln-db__analyze_code_pattern, mcp__unified-vuln-db__get_root_cause_analysis, mcp__unified-vuln-db__get_attack_vectors, mcp__unified-vuln-db__validate_hypothesis, mcp__unified-vuln-db__search_solodit_live]
+tools: [Read, Write, Grep, mcp__slither-analyzer__get_function_source, mcp__slither-analyzer__get_function_callees, mcp__solana-fender__security_check_program, mcp__solana-fender__security_check_file, mcp__unified-vuln-db__analyze_code_pattern, mcp__unified-vuln-db__get_root_cause_analysis, mcp__unified-vuln-db__get_attack_vectors, mcp__unified-vuln-db__validate_hypothesis]
 ---
 
 # Depth Agent: External Dependency Analysis

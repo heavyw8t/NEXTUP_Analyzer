@@ -97,67 +97,42 @@ When CLI tools fail or for targeted analysis beyond what the compiler checks:
 
 ## unified-vuln-db -- Your Attack Pattern Library
 
-### Local Database Tools (~3.4k indexed findings)
+### Local CSV-backed Index (19,370 findings, MEDIUM + HIGH only)
+
+All queries hit an in-process BM25 index over a curated Solodit-derived CSV. No network, no ChromaDB. Per-language shards; for Aptos queries use `filters={"protocol_types": ["Move"]}` (128 Move rows).
 
 | Tool | What It Gives You | When to Use |
 |------|-------------------|-------------|
-| `get_root_cause_analysis(bug_class)` | Why specific bug classes occur | Step 1c -- prime your analysis |
-| `get_attack_vectors(bug_class)` | How exploits work mechanically | Depth agents -- understand exploit mechanics |
-| `analyze_code_pattern(pattern, code_context)` | Pattern matching against known vulns | Step 6 -- validate hypotheses |
-| `validate_hypothesis(hypothesis)` | Cross-reference against known bugs | Step 6 -- before verification |
-| `get_similar_findings(description)` | Similar bugs from other audits | Step 6 -- calibrate severity |
+| `get_root_cause_analysis(bug_class)` | Summary excerpts of past findings matching the bug class | Step 1c -- prime your analysis |
+| `get_attack_vectors(bug_class)` | Similar findings clustered by attack mechanism | Depth agents -- understand exploit mechanics |
+| `analyze_code_pattern(pattern, code_context, protocol_type)` | BM25 matches with reasoning material | Step 6 -- validate hypotheses |
+| `validate_hypothesis(hypothesis)` | Cross-reference against indexed findings | Step 6 -- before verification |
+| `get_similar_findings(pattern)` | Top-k BM25 row dicts | Step 6 -- calibrate severity |
+| `get_common_vulnerabilities(protocol_type)` | Tag/severity aggregation | Pre-depth scoping |
+| `get_knowledge_stats()` | Index readiness probe | Agent 1A startup probe |
 
-**Bug classes**: reentrancy, access-control, arithmetic-precision, oracle-manipulation, flash-loan, dos, ability-misuse, bit-shift-overflow
+**Unavailable under CSV** (return explicit `{error, fallback}`):
+- `get_similar_exploit_code` -- CSV has no PoC source code.
+- `get_fix_patterns` -- CSV has no recommendations or diff patches.
 
-**Aptos-specific query tips**: The database is EVM-heavy but vulnerability patterns transfer. Frame queries in terms of the underlying pattern:
-- For ability misuse: `get_root_cause_analysis(bug_class='access-control')` + search for "copy"/"drop" patterns
-- For bit-shift overflow: `get_attack_vectors(bug_class='arithmetic-precision')` covers overflow patterns
-- For type confusion: `get_root_cause_analysis(bug_class='access-control')` + search for "type" patterns
-- For ref lifecycle: `get_attack_vectors(bug_class='access-control')` + search for "capability"/"permission" patterns
-- "resource access control" maps to -> access-control
-- "oracle price manipulation" maps to -> oracle-manipulation
-- "donation attack threshold manipulation" maps to -> dos
+When local results are thin (< 5 hits), expand via `mcp__tavily-search__tavily_search` or `WebSearch` rather than a live Solodit call.
 
-### Live Solodit API (50k+ findings -- MANDATORY for comprehensive analysis)
+**Bug classes** (seed terms): reentrancy, access-control, arithmetic-precision, oracle-manipulation, flash-loan, dos, ability-misuse, bit-shift-overflow.
 
-| Tool | What It Gives You | When to Use |
-|------|-------------------|-------------|
-| `search_solodit_live(...)` | Full Solodit database search | **MANDATORY** during hypothesis validation and deep dives |
+**Aptos-specific query tips**: The index is EVM-heavy (16,814 Solidity rows) but patterns transfer. Frame queries by underlying pattern:
+- Ability misuse -> `get_root_cause_analysis(bug_class='access-control')` + search for "copy"/"drop".
+- Bit-shift overflow -> `get_attack_vectors(bug_class='arithmetic-precision')`.
+- Type confusion -> `get_root_cause_analysis(bug_class='access-control')` + "type" keywords.
+- Ref lifecycle -> `get_attack_vectors(bug_class='access-control')` + "capability"/"permission".
+- "resource access control" -> access-control.
+- "oracle price manipulation" -> oracle-manipulation.
+- "donation attack threshold manipulation" -> dos.
 
-**MANDATORY Usage -- Call `search_solodit_live` when:**
-1. Local search returns < 5 results -> Expand search
-2. Validating HIGH/CRITICAL hypothesis -> Cross-reference comprehensively
-3. Protocol-specific deep dive -> Search by protocol name
-4. Understanding attack patterns -> Search by vulnerability tags
+**Common tags available via `filters.tag` substring**: Reentrancy, Oracle, Access Control, Flash Loan, Front-running, Price Manipulation, Logic Error, DOS, Griefing, Signature, Upgrade, Initialization, Precision Loss, Rounding, First Depositor, Share Inflation, ERC4626, Liquidation, Governance, Cross-chain, Bridge, Slippage, Timestamp, Randomness, Delegatecall.
 
-**Parameters:**
-```
-search_solodit_live(
-  keywords="ability misuse copy drop Move",     # Free-text search
-  impact=["HIGH", "MEDIUM"],                    # Severity filter
-  tags=["Move", "Aptos", "Logic Error"],        # Solodit vulnerability tags
-  protocol="",                                  # Protocol name (partial match)
-  protocol_category=["DeFi"],                   # Category filter (array)
-  firms=["{RELEVANT_FIRM}"],                     # Audit firm filter
-  language="Move",                              # Language: Solidity/Rust/Cairo/Move
-  quality_score=3,                              # Min quality (0-5), use >=3
-  rarity_score=3,                               # Min rarity (0-5), unique patterns
-  min_finders=1, max_finders=1,                # Solo finds only
-  sort_by="Quality",                            # Quality/Recency/Rarity
-  sort_direction="Desc",                        # Desc/Asc
-  max_results=20                                # Up to 50
-)
-```
+**Aptos/Move-relevant tags**: Move, Aptos, Ability, Bit Shift, FungibleAsset, Object, Resource, Type Safety, Module Upgrade, Capability.
 
-**Common Solodit Tags (general)**: Reentrancy, Oracle, Access Control, Flash Loan, Front-running,
-Price Manipulation, Logic Error, DOS, Griefing, Signature, Upgrade, Initialization,
-Precision Loss, Rounding, First Depositor, Share Inflation, ERC4626, Liquidation,
-Governance, Cross-chain, Bridge, Slippage, Timestamp, Randomness, Delegatecall
-
-**Aptos/Move-Relevant Solodit Tags**: Move, Aptos, Ability, Bit Shift, FungibleAsset,
-Object, Resource, Type Safety, Module Upgrade, Capability
-
-> **Note**: The Solodit database is predominantly EVM-focused. For Move/Aptos-specific patterns, supplement with `tavily_search` for Aptos-specific vulnerability disclosures, Move security blog posts, and Aptos framework changelog entries.
+> **Note**: The index is Solidity-heavy. For Move/Aptos-specific patterns, supplement `get_similar_findings` with `tavily_search` for Aptos vulnerability disclosures, Move security blog posts, and Aptos framework changelog entries.
 
 ---
 
