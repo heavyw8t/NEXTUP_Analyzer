@@ -154,6 +154,52 @@ Tag: [TRACE:observation_updated_before_read=YES/NO → buffer_wrap_handled=YES/N
 - Program reads price only from Pyth or Switchboard; CLMM sqrt_price is not used as oracle. Section 5 reduced.
 - Program opens full-range position only; tick array discovery simplified. Section 2c still required.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Contract storage exhaustion via unbounded deposit array growth
+  Where it hit: liquidity_lockbox::deposit() in lockbox-solana (Orca Whirlpool lockbox)
+  Severity: HIGH
+  Source: Solodit (row_id 9225)
+  Summary: The lockbox contract stores one record per deposit in a fixed-size on-chain account capped at 10 KB. After 625 deposits the account is full and every subsequent deposit reverts, permanently DoS-ing the contract. An attacker can reach this cap cheaply with minimal-liquidity deposits.
+  Map to: liquidity_lockbox, whirlpool
+
+- Pattern: ATA pre-initialization griefing on NFT deposit
+  Where it hit: liquidity_lockbox::deposit() in lockbox-solana (Orca Whirlpool lockbox)
+  Severity: MEDIUM
+  Source: Solodit (row_id 8774)
+  Summary: The deposit instruction uses Anchor's `init` constraint to create the position NFT's associated token account. Because `init` reverts if the account already exists, an attacker who pre-creates that ATA causes every deposit for that specific NFT to fail permanently. No assets can be stolen, but the position is rendered undepositable.
+  Map to: liquidity_lockbox, position_nft, whirlpool
+
+- Pattern: Missing collect_rewards call before position close causes unexpected revert
+  Where it hit: liquidity_lockbox::withdraw() in lockbox-solana (Orca Whirlpool lockbox)
+  Severity: MEDIUM
+  Source: Solodit (row_id 8775)
+  Summary: The withdraw flow closes the Whirlpool position without first calling whirlpool::collect_rewards. When rewards are enabled on the pool, the close instruction reverts because uncollected rewards remain. This silently DoS-es withdrawals for any position with pending rewards, fitting the Section 4a pattern of ordering fees/rewards before close.
+  Map to: liquidity_lockbox, whirlpool
+
+- Pattern: No minimum deposit threshold enables cheap griefing via dust positions
+  Where it hit: liquidity_lockbox::deposit() in lockbox-solana (Orca Whirlpool lockbox)
+  Severity: MEDIUM
+  Source: Solodit (row_id 9218)
+  Summary: The lockbox imposes no lower bound on deposited liquidity. A malicious actor opens many dust positions at minimal cost, filling the on-chain position list. Legitimate users then bear the per-position transaction cost when withdrawing through a linear scan, creating a griefing vector that amplifies the storage-exhaustion risk in row_id 9225.
+  Map to: liquidity_lockbox, whirlpool, tick_array
+
+- Pattern: Flashloan-assisted reward manipulation via instant deposit-withdraw cycle
+  Where it hit: liquidity_lockbox reward distribution in lockbox-solana (Orca Whirlpool lockbox)
+  Severity: MEDIUM
+  Source: Solodit (row_id 9219)
+  Summary: A user can deposit a large amount of liquidity, immediately withdraw in the same transaction (or across two transactions using a flash loan), and claim a disproportionate share of OLAS rewards without bearing sustained liquidity risk. The attack is repeatable as long as the flashloan cost is less than the captured reward. This maps to the Section 5a thin-liquidity / price manipulation class applied to reward accounting.
+  Map to: liquidity_lockbox, whirlpool, sqrt_price_x64
+
+---
+
+*Coverage note: All 5 candidates originate from a single audit of the Orca `liquidity_lockbox` contract in the `lockbox-solana` repository. Coverage of other CLMM integration domains (Raydium CLMM, tick array ordering, sqrt_price rounding, NFT authority checks, observation ring buffer) is absent from this candidate set. When this skill activates on a non-lockbox protocol, treat these examples as supplementary precedent only and rely on the skill's static patterns for full coverage.*
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

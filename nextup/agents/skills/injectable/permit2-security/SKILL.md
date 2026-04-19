@@ -203,6 +203,90 @@ Tag: `[TRACE:pattern={router/fallback/access_control} → router_upgradeable={YE
 - **Protocol-controlled transfers only**: If the protocol never exposes Permit2 signatures to users (only uses them internally between its own contracts), external replay is not applicable
 - **Allowance mode with immediate revocation**: If the protocol calls `permit()` then `transferFrom()` then `invalidateNonces()` atomically, allowance persistence is not a concern
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Configurable permit2 address with no access control on initializer
+  Where it hit: SwapProxy / SwapImpl contract — `initialize()` callable by anyone, multiple times, accepting arbitrary `permit2` address
+  Severity: HIGH
+  Source: Solodit (row_id 121)
+  Summary: The `initialize` function lacked access control and could be called repeatedly. An attacker reinitialized the proxy with a malicious contract as the `permit2` address. All subsequent token operations routed through the fake Permit2, draining WETH approvals.
+  Map to: IPermit2
+
+- Pattern: Block number used as Permit2 nonce — collision when multiple orders execute in the same block
+  Where it hit: BunniHook rebalance order creation
+  Severity: HIGH
+  Source: Solodit (row_id 3806)
+  Summary: The code passed `block.number` as the Permit2 signature nonce. Permit2 rejects a nonce that has already been consumed, so only the first rebalance order per block succeeded. An attacker could also grief pools by submitting a dummy rebalance order each block, consuming the nonce before the legitimate one.
+  Map to: ISignatureTransfer, PermitTransferFrom
+
+- Pattern: No validation that `permitSingle.token` matches the order's `inputToken` — cross-order permit substitution
+  Where it hit: StarBaseLimitOrder / StarBaseDCA order fill logic
+  Severity: HIGH
+  Source: Solodit (row_id 5234)
+  Summary: The fill function accepted a `permitSingle` struct without verifying that its token field matched the order's `makerToken`. A malicious filler supplied the permit data from one user's order to fill a different order, redirecting tokens and profiting from the mismatch.
+  Map to: IAllowanceTransfer, ISignatureTransfer, PermitTransferFrom
+
+- Pattern: `permitTransferFrom()` called without validating the permitted token against the expected vault asset
+  Where it hit: V3Vault — three call sites of `permit2.permitTransferFrom()` accepted any ERC20
+  Severity: HIGH
+  Source: Solodit (row_id 8104)
+  Summary: The vault used Permit2 signature transfers for USDC deposits but never checked that `TokenPermissions.token == vaultAsset`. An attacker crafted a permit signature over a worthless ERC20, deposited it, and received USDC credit, draining the vault's USDC balance.
+  Map to: ISignatureTransfer, PermitTransferFrom
+
+- Pattern: Protocol allows arbitrary external calls to Permit2 inside order execution, enabling theft of another user's signature
+  Where it hit: BeefyZapRouter order execution and relay paths
+  Severity: HIGH
+  Source: Solodit (row_id 9246)
+  Summary: The router permitted external calls to the Permit2 contract as part of step execution. An attacker constructed an order whose steps called `permitTransferFrom` with a valid signature from a different user, redirecting that user's tokens to themselves.
+  Map to: ISignatureTransfer, PermitTransferFrom, PermitBatchTransferFrom
+
+- Pattern: Signature Transfer used without witness data — signature is not bound to a specific operation or recipient
+  Where it hit: SablierV2ProxyTarget — proxy used the signature for any transfer without committing to the target contract or function
+  Severity: HIGH
+  Source: Solodit (row_id 11456)
+  Summary: The proxy consumed a bare `permitTransferFrom` signature that carried no witness data. Because the signature did not encode the intended operation, a user or attacker could front-run the proxy and submit the same signature for a different purpose, draining the authorized amount to an unintended destination.
+  Map to: ISignatureTransfer, PermitTransferFrom
+
+- Pattern: `uint160` silent truncation of token amount in Permit2 transfer
+  Where it hit: Permit2 integration in a token transfer helper function
+  Severity: MEDIUM
+  Source: Solodit (row_id 235)
+  Summary: A large token amount cast to `uint160` was silently truncated, causing the actual transfer amount to differ from the signed amount. The truncation only occurred for amounts exceeding `type(uint160).max`, but the protocol did not guard against this, so the signer's intent was violated.
+  Map to: IAllowanceTransfer, ISignatureTransfer, PermitTransferFrom
+
+- Pattern: Incorrect `PERMIT2_ORDER_TYPE` / malformed witness typehash breaks EIP-712 encoding
+  Where it hit: ERC7683Across — `PERMIT2_ORDER_TYPE` omitted fields from `GaslessCrossChainOrder` and `AcrossOrderData`
+  Severity: MEDIUM
+  Source: Solodit (row_id 1624)
+  Summary: The witness type string did not include all struct members required by EIP-712 and the Permit2 witness specification. The resulting `CROSS_CHAIN_ORDER_TYPE` hash was incorrect, meaning signatures generated off-chain could not be verified on-chain, and in the worst case, a collision with a correctly encoded type string from another protocol was possible.
+  Map to: ISignatureTransfer, PermitTransferFrom
+
+- Pattern: Permit front-run DoS via nonce advancement (missing try-catch around `Permit2.permit`)
+  Where it hit: P2pLendingProxy `deposit` function
+  Severity: MEDIUM
+  Source: Solodit (row_id 2867)
+  Summary: The deposit function called `Permit2.permit` as a separate step before `transferFrom`. An attacker extracted the permit call from the mempool and front-ran it with identical arguments, consuming the nonce. The victim's transaction then reverted on the permit call, permanently blocking the deposit at negligible cost to the attacker.
+  Map to: IAllowanceTransfer, ISignatureTransfer
+
+- Pattern: Canceled order's `permitSingle` nonce not invalidated — permit remains usable after order cancellation
+  Where it hit: StarBase limit-order `cancelOrder` function
+  Severity: MEDIUM
+  Source: Solodit (row_id 5226)
+  Summary: When a user canceled an order, the contract updated its own order state but did not call `invalidateNonces` on Permit2. The permit signature remained valid and could be replayed by anyone who observed it, filling the order even after the user intended to cancel.
+  Map to: IAllowanceTransfer, ISignatureTransfer, PermitTransferFrom
+
+- Pattern: Fee-on-transfer token amount discrepancy with `permitTransferFrom` — protocol credits signed amount, not received amount
+  Where it hit: DonationVotingMerkleDistributionVaultStrategy `_afterAllocate()`
+  Severity: MEDIUM
+  Source: Solodit (row_id 10255)
+  Summary: The protocol used `permitTransferFrom` to pull a donation then credited the recipient with the signed amount. For fee-on-transfer tokens, the vault received less than the signed amount. The deficit accumulated with every deposit, eventually draining the vault of the shortfall.
+  Map to: ISignatureTransfer, PermitTransferFrom
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

@@ -154,6 +154,79 @@ Tag: [TRACE:account_model_branching=correct/uniform → plugin_expectations_chec
 - Program handles one pinned collection and fixed TokenStandard. Section 2a and 6 reduced.
 - Program uses a trusted delegate signer that enforces royalty in escrow. Section 2 partially delegated.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+> Domain: metaplex-nft-standard (mpl_token_metadata, mpl_core, TokenStandard, MasterEdition, verify_creator, verify_collection, RuleSet)
+> Sources searched: OShield/MadShield audit reports, Bonfida vulnerability disclosure, Andy Kutruff blog, Perma DAO audit summary, SolShield writeups.
+
+---
+
+- Pattern: Unauthorized collection assignment via delegated collection authority record lacking update-authority binding
+  Where it hit: mpl_token_metadata `verify_collection` / `set_and_verify_collection` instruction; collection authority record PDA
+  Severity: CRITICAL
+  Source: https://medium.com/@oshield/a-smorgasbord-or-on-how-to-nitpick-your-metaplex-nft-collection-84dfd172e574
+  Summary: The collection authority record did not store the update authority that approved the delegation. An attacker could therefore approve themselves as a delegate for any NFT's collection field, set the collection to their own collection NFT, and then burn the collection NFT, permanently locking the on-chain collection field to a fraudulent value. Marketplaces, AMMs, and staking programs that accept NFTs by verified collection membership were directly exposed. The fix added the update authority to the collection authority record PDA and validated it on every assert.
+  Map to: verify_collection, mpl_token_metadata
+
+---
+
+- Pattern: Re-initialization of an already-initialized Candy Machine account, allowing the attacker to redirect sale proceeds to themselves
+  Where it hit: Metaplex Candy Machine v2 `initialize` instruction; candy machine config account
+  Severity: CRITICAL
+  Source: https://medium.com/@oshield/smashing-the-candy-machine-for-fun-and-profit-a3bcc58d6c30
+  Summary: The `initialize` instruction did not verify that the candy machine account was uninitialized before writing to it. An attacker could pass an already-created candy machine account back to the instruction and overwrite the `wallet` field with their own address, hijacking all future mint proceeds. The same flaw also allowed minting an unlimited number of NFTs from the collection and draining the rent-lamport balance held by every deployed candy machine. Fixed by changing the account constraint from `init_if_needed` to `init` in the Anchor definition.
+  Map to: mpl_token_metadata (Candy Machine uses mpl_token_metadata for minting)
+
+---
+
+- Pattern: Bidder-pot token account substitution in `place_bid` allows an attacker to merge another bidder's funds and drain them via `cancel_bid`
+  Where it hit: Metaplex Auction program `place_bid` instruction; `bidder_pot_token` account parameter
+  Severity: CRITICAL
+  Source: https://github.com/Bonfida/metaplex-vulnerability-012022
+  Summary: The `place_bid` instruction accepted a caller-supplied `bidder_pot_token` account with only the constraint that it be owned by the auction program. Nothing prevented the caller from supplying a `bidder_pot_token` that already contained another bidder's funds. Calling `cancel_bid` then drained the merged account to the attacker's wallet, stealing the other bidder's bid. All active Metaplex auction accounts were at risk. Metaplex awarded a 100 k USD bug bounty. Fixed by requiring the bidder pot token to be an uninitialized PDA.
+  Map to: mpl_token_metadata (Auction program mints and transfers Token Metadata NFTs)
+
+---
+
+- Pattern: Auction House creation without authority signature allows attacker to register a fraudulent auction house for any wallet and redirect treasury withdrawals
+  Where it hit: Metaplex Auction House `create_auction_house` instruction; `authority` and `treasury_withdrawal_destination` accounts
+  Severity: HIGH
+  Source: https://akutruff.github.io/blog/posts/2022-10-25-auction-house-creation-account-poisoning
+  Summary: The `create_auction_house` instruction did not require the `authority` account to sign the transaction. An attacker could create an auction house for any existing marketplace's wallet, specifying their own address as the `treasury_withdrawal_destination`. When the legitimate marketplace later called the withdraw instruction, funds would flow to the attacker's account. The attack also enabled creating and executing auctions that the marketplace would not have authorized. The fix added a signer check on the `authority` account.
+  Map to: mpl_token_metadata (Auction House transfers NFTs via Token Metadata)
+
+---
+
+- Pattern: pNFT burn instruction can be abused to permanently disable all programmable NFT operations on the targeted asset
+  Where it hit: mpl_token_metadata `burn` instruction for `ProgrammableNonFungible` TokenStandard; token record account
+  Severity: CRITICAL
+  Source: https://medium.com/@perma_dao/metaplex-releases-audit-report-addresses-issues-in-pnfts-token-integration-fe7aa95c9d0e
+  Summary: The MadShield 2023 audit of mpl_token_metadata (covering releases February through November 2023) identified a critical flaw in the `burn` path for programmable NFTs where the instruction could be triggered in a way that permanently broke the token record state, making the NFT non-transferable and non-burnable thereafter. This rendered the asset economically worthless while still appearing to exist on-chain. The vulnerability was resolved before public disclosure.
+  Map to: mpl_token_metadata, TokenStandard (ProgrammableNonFungible)
+
+---
+
+- Pattern: Transfer instruction for pNFTs does not enforce the assigned RuleSet, allowing royalty and transfer rules to be bypassed entirely
+  Where it hit: mpl_token_metadata `transfer` instruction for `ProgrammableNonFungible`; `mpl_token_auth_rules` RuleSet evaluation
+  Severity: CRITICAL
+  Source: https://medium.com/@perma_dao/metaplex-releases-audit-report-addresses-issues-in-pnfts-token-integration-fe7aa95c9d0e
+  Summary: The same MadShield 2023 audit found that the `transfer` instruction for programmable NFTs failed to correctly invoke or assert the auth-rules program under certain code paths, meaning all configured RuleSet rules (including royalty-enforcement allowlists) could be bypassed. A second critical finding showed that the `allowlist` rule specifically within the RuleSet could be bypassed even when the RuleSet was evaluated. Both issues were fixed and resolved before public disclosure.
+  Map to: mpl_token_metadata, TokenStandard (ProgrammableNonFungible), RuleSet
+
+---
+
+- Pattern: Non-canonical bump seed accepted by Token Entangler allows permanent lock-up of entangled NFTs
+  Where it hit: Metaplex Token Entangler `create_entanglement` / swap instructions; `token_a_escrow` and `token_b_escrow` PDAs; `bump` parameter
+  Severity: HIGH
+  Source: https://akutruff.github.io/blog/posts/2022-10-19-token-entangler-overview
+  Summary: The Token Entangler accepted a caller-supplied `bump` value to derive escrow PDAs instead of requiring the canonical bump from `find_program_address`. Anchor internally uses the canonical bump when creating the account, so a non-canonical bump stored in the account diverged from the one the program later expected when trying to sign for the PDA. This caused swap instructions to fail permanently, locking both NFTs in escrow forever. An attacker could target high-value NFTs and trigger permanent lock-up, suppressing supply and collapsing collection floor prices.
+  Map to: mpl_token_metadata (Token Entangler operates on Token Metadata NFTs)
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

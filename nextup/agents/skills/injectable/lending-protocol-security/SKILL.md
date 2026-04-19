@@ -252,6 +252,69 @@ Tag: `[TRACE:oracle_price={source} → token_match={exact/wrapper/underlying} �
 - **Liquidation bonus exceeding collateral for tiny positions**: If minimum borrow size prevents tiny positions, the economics are safe for all valid positions
 - **Oracle staleness check reverting liquidation**: If a fallback oracle exists and is used when primary is stale, liquidation is not blocked
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Collateral ratio bypass via stale exchange rate — borrow function uses `exchangeRateStored` (which omits pending interest) instead of `exchangeRateCurrent`, causing users to receive more lTokens than entitled and opening undercollateralized positions.
+  Where it hit: Lend-V2 (CoreRouter / LToken supply flow)
+  Severity: HIGH
+  Source: Solodit (row_id 1432)
+  Summary: When a user supplies tokens, the protocol applies an outdated exchange rate that excludes accrued interest, minting excess lTokens. An attacker can exploit the stale rate window to supply, withdraw a small amount to refresh their share basis, then drain the remaining surplus. The fix is to call `exchangeRateCurrent` so pending interest is included before minting.
+  Map to: collateral, interestRate, debtToken, LTV
+
+- Pattern: Interest accrual skipped for cross-chain borrows — borrow index on a cross-chain loan is resolved using the same-chain LToken index, producing a wrong interest accumulation base for the remote debt.
+  Where it hit: Lend-V2 (LendStorage cross-chain borrow index)
+  Severity: HIGH
+  Source: Solodit (row_id 1419)
+  Summary: Cross-chain debt is tracked separately from same-chain debt, but the accrual function reads the local LToken's borrow index regardless of chain origin. This understates or overstates interest on cross-chain loans, making debt values incorrect for both repayment and liquidation eligibility checks.
+  Map to: interestRate, debtToken, borrow
+
+- Pattern: Collateral check bypass in borrow — `borrow()` recalculates the borrow amount from a user's historical borrow index rather than comparing actual collateral to actual outstanding debt, allowing the check to pass even when total debt exceeds collateral.
+  Where it hit: Lend-V2 (CoreRouter.sol borrow function)
+  Severity: HIGH
+  Source: Solodit (row_id 1418)
+  Summary: The health check inside `borrow()` recomputes `borrowAmount` via the user's stored index for a specific market, producing a value that can be smaller than the true debt. The inflated apparent surplus passes the collateral check, letting borrowers open undercollateralized positions and generating bad debt for the protocol.
+  Map to: borrow, collateral, healthFactor, LTV
+
+- Pattern: Liquidation DoS via reentrancy guard conflict — `liquidate()` holds a `nonReentrant` lock while calling an internal transfer that itself tries to acquire the same lock, causing every liquidation to revert.
+  Where it hit: Generic lending pool (StabilityPool / liquidate call path)
+  Severity: HIGH
+  Source: Solodit (row_id 5246)
+  Summary: Two `nonReentrant` modifiers are stacked in the liquidation call path: one on the outer `liquidate()` entry point and one on the inner lender callback. When the inner call fires, `_reentrancyStatus` is already `ENTERED`, so `_nonReentrantBefore()` reverts. No liquidations can execute until one modifier is removed, leaving underwater positions unresolvable.
+  Map to: liquidate, healthFactor
+
+- Pattern: Bad-debt socialization broken by missing interest update in liquidation — interest is not forwarded to LP stakers when `liquidatePositionBadDebt()` repays debt, silently absorbing interest income into the liquidated position rather than distributing it.
+  Where it hit: LoopFi (CDPVault.sol / PoolV3.sol)
+  Severity: HIGH
+  Source: Solodit (row_id 5420)
+  Summary: `liquidatePositionBadDebt()` repays the principal but omits the step that routes accrued interest to `lpETH` stakers. Stakers lose yield on every bad-debt liquidation event. The fix requires routing the interest portion explicitly to `PoolV3` before closing the position.
+  Map to: liquidate, interestRate, debtToken
+
+- Pattern: Utilization rate formula excludes borrows from denominator — denominator uses only supply-side deposits, so utilization can exceed 100% and borrow rates become inflated beyond the model's intended curve.
+  Where it hit: Gloop Finance (GMInterestRateModel)
+  Severity: HIGH
+  Source: Solodit (row_id 5628)
+  Summary: The utilization formula divides `borrows` by `cash` alone, omitting `borrows` from the denominator. Under standard compound-style math the correct denominator is `cash + borrows`. When borrows approach total cash, utilization climbs above 1.0, driving interest rates to pathological values and overcharging borrowers.
+  Map to: interestRate, borrow, LTV
+
+- Pattern: Liquidation threshold miscalculation due to incorrect scaling of debt token — `DebtToken.burn` does not adjust the repayment amount when the usage index changes mid-transaction, causing borrowers to underpay debt and leaving unrecovered bad debt.
+  Where it hit: Generic lending protocol (DebtToken.sol burn / repay path)
+  Severity: HIGH
+  Source: Solodit (row_id 2407)
+  Summary: The `burn` function that handles repayment calculates the scaled amount to retire using a stale usage index snapshot. If the index is updated between the user's repay call and the burn execution, the burned shares are fewer than required, leaving residual debt. Over time this compounds into uncollectable bad debt and breaks the pool's solvency invariant.
+  Map to: debtToken, interestRate, healthFactor, collateral
+
+- Pattern: Self-liquidation exploit via oracle manipulation — attacker manipulates a push-oracle price, max-borrows the debt token, then triggers liquidation on themselves to seize collateral at the inflated price while repaying fewer debt tokens than borrowed.
+  Where it hit: Generic lending protocol (Liquidation.sol)
+  Severity: HIGH
+  Source: Solodit (row_id 5974)
+  Summary: The protocol accepts a caller-supplied price update (e.g. Redstone/Pyth) with no manipulation guardrail. An attacker sandwiches the price update: borrow maximum at an inflated collateral price, then liquidate their own position before the price reverts, receiving seized collateral whose market value exceeds the debt repaid. Residual bad debt is left for the protocol. The attack is atomic and risk-free when oracle adapters allow same-transaction price injection.
+  Map to: liquidate, collateral, healthFactor, LTV
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

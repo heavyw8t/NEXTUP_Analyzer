@@ -143,6 +143,76 @@ For actions where the ORDER of multiple actors matters:
 - **Timelock-protected setters**: If admin changes require N-block delay with public announcement, asymmetry is mitigated (but verify ALL setters have the timelock, not just some)
 - **Uniform delay cost**: If delaying always costs more than the potential gain, rational delay is not profitable
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Attacker reuses shared sequence number across lottery providers by reverting callback after observing provider change, forcing the same randomness slot to be re-consumed under the new provider and controlling the lottery outcome.
+  Where it hit: Megapot ScaledEntropyProvider (Solidity)
+  Severity: MEDIUM
+  Source: Solodit (row_index 23)
+  Summary: The contract tracks VRF requests by sequence number only, not by (sequence, provider) pair. An attacker front-runs a provider switch and causes the pending callback to revert, leaving the sequence number uncleared. The attacker then calls the new provider with the same sequence number, choosing the result that wins the jackpot.
+  Map to: sequence_dependent, front_run
+
+- Pattern: Rational actor observes on-chain collateral-settlement threshold (put options in-the-money condition), predicts when LP losses will be realized, and exits the LP vault before `settle()` is called, shifting the full loss to slower LPs.
+  Where it hit: Dopex PerpetualAtlanticVaultLP (Solidity)
+  Severity: HIGH
+  Source: Solodit (row_index 10535)
+  Summary: The price threshold that triggers option settlement is publicly observable. Any LP who detects an upcoming in-the-money settlement can redeem before it executes, provided excess collateral exists. The default outcome (remaining in the vault through settlement) is strictly worse than the active choice (exit before settlement). Repeated LP exits drain available collateral, causing secondary DoS on RdpxV2Core bonding.
+  Map to: strategic_timing, depletion
+
+- Pattern: Accepted grant recipient front-runs the manager's `_allocate()` call by re-registering with a higher `proposalBid`, causing the subsequently-called `_distribute()` to pay out the inflated amount rather than the accepted one.
+  Where it hit: Gitcoin RFPSimpleStrategy (Solidity)
+  Severity: HIGH
+  Source: Solodit (row_index 10266)
+  Summary: `_registerRecipient()` overwrites `proposalBid` without checking whether the recipient is already accepted. The pool manager's acceptance transaction is visible in the mempool; the registrant re-submits with a larger bid before allocation commits it. Because `_distribute()` reads the live `proposalBid`, the payout is the attacker's inflated value rather than the negotiated one.
+  Map to: sequence_dependent, front_run
+
+- Pattern: At auction close, any bidder who delays to the last block prevents counter-bids; the ordering guarantee of block finality provides a structural last-mover advantage.
+  Where it hit: Clearpool Finance PermissionlessProtocol `bid()` (Solidity)
+  Severity: HIGH
+  Source: Solodit (row_index 12572)
+  Summary: Every bid transaction can be front-run or back-run. Because there is no time buffer after the final bid, a bidder who submits in the last block cannot be outbid before the auction closes. Waiting to bid is therefore a dominant strategy for any bidder who can monitor the mempool, making honest earlier bids economically irrational.
+  Map to: strategic_timing, sequence_dependent
+
+- Pattern: A relayer delays honest checkpoint submission, observes the signed checkpoint data of the first honest submitter in the mempool, and re-submits the same proof with a higher gas price to steal the reward.
+  Where it hit: Filecoin SubnetActorManagerFacet `submitCheckpoint()` (Solidity)
+  Severity: HIGH
+  Source: Solodit (row_index 8269)
+  Summary: `submitCheckpoint()` pays a reward to whichever address submits a valid checkpoint first. Because checkpoint data is public once broadcast, a monitoring actor can copy a valid submission and front-run it. Honest relayers who do the computational work receive nothing; the reward allocation outcome is purely a function of gas-price ordering, not of who originated the work.
+  Map to: strategic_timing, sequence_dependent
+
+- Pattern: Admin setter for system parameters (oracle prices, collateral ratios) takes effect in the same block with no timelock and no event; users who observe the pending parameter-change transaction can act on state that has not yet updated, while the admin acts on the post-update value.
+  Where it hit: TBTC/Keep TBTCSystem admin parameter setters (Solidity)
+  Severity: HIGH
+  Source: Solodit (row_index 18837)
+  Summary: Owner functions change system parameters (price feeds, collateral thresholds) immediately, with no mandatory delay. The admin observes the chain state and can sequence their own transactions before user operations that depend on the old parameters, or can front-run user transactions with a parameter change that makes the user's action unfavorable. The absence of timelocks means the asymmetry window is one block for a colluding miner and potentially many blocks for any user who relies on event logs.
+  Map to: admin_parameter_regression, front_run
+
+- Pattern: Two governance actors submit conflicting `removeValidators` transactions; the ordering of inclusion determines which validator set remains active, and either party can front-run the other to force a different selection outcome.
+  Where it hit: Liquid Collective OperatorsRegistry `removeValidators()` (Solidity)
+  Severity: HIGH
+  Source: Solodit (row_index 13752)
+  Summary: `removeValidators()` takes a list of validator indices to remove from the active set. If entities A and B each submit a removal with different index lists, the order in which the transactions are mined produces a different final active validator set. Either party can observe the other's pending transaction and front-run it to ensure their preferred selection outcome. No snapshot or ordering guard exists.
+  Map to: sequence_dependent, probability_redistribution
+
+- Pattern: Calling `pokeTokens()` before other voters have cast their votes inflates the total voting-power denominator used for bribe calculation, reducing the per-token bribe payout for all honest voters who voted before the poke.
+  Where it hit: Alchemix Voter.sol `pokeTokens()` (Solidity)
+  Severity: HIGH
+  Source: Solodit (row_index 6840)
+  Summary: `pokeTokens()` does not verify that the epoch has not already been voted in. Invoking it early adds weight to the total without waiting for all votes, then subsequent vote weight additions increase the denominator, diluting early voters' bribe share. The outcome distribution across voters is sequence-dependent: actors who vote after the poke receive a smaller share than those who voted before it, regardless of their absolute vote weight.
+  Map to: sequence_dependent, probability_redistribution
+
+- Pattern: User observes a pending oracle price update in the mempool and times a deposit or redemption to execute against the stale exchange rate, capturing risk-free profit from the price delta before the oracle commits.
+  Where it hit: DYAD protocol `_eth2dyad()` / `_dyad2eth()` (Solidity)
+  Severity: HIGH
+  Source: Solodit (row_index 13207)
+  Summary: The exchange rate used for deposits and redemptions is derived from an oracle that updates via observable on-chain transactions. A rational actor can watch for the oracle update transaction and front-run it: deposit at the pre-update rate when the new rate is higher (leveraged ETH exposure), or redeem before a rate decrease. Because the oracle price path is often predictable from off-chain ETH price feeds, strategic timing does not even require mempool access.
+  Map to: strategic_timing, front_run
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

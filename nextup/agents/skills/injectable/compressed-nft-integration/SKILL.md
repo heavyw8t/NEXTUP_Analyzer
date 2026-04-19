@@ -154,6 +154,99 @@ Tag: [TRACE:noop_program_pinned=YES/NO → log_data_complete=YES/NO → log_in_s
 - Wrapper relies on a single trusted indexer with signed proofs. Section 4 partially delegated.
 - No decompression path. Section 5 does not apply.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+Sources searched: Snyk advisory database, GitHub Security Advisory Database (metaplex-foundation/metaplex-program-library), Solodit, Cantina blog, public write-ups (Bonfida, SolShield, Perma DAO).
+
+---
+
+## Finding 1
+
+- Pattern: Canopy not updated on leaf mutation — `ConcurrentMerkleTree::update` updates the leaf and its main-tree proof path but does not refresh the canopy nodes. Subsequent proof generation against the stale canopy produces invalid proofs that fail on-chain verification.
+- Where it hit: `spl-account-compression` / `ConcurrentMerkleTree` (upstream SPL library, resolved in commit 587ca5f)
+- Severity: HIGH
+- Source: local CSV row 5317 (solodit_findings.dedup.csv); confirmed via SPL commit history
+- Summary: The update function lacked logic to propagate leaf changes into the cached canopy layer. Any caller that re-used proof paths after a leaf update received proofs built against stale canopy hashes, causing all subsequent tree operations on affected leaves to revert. The fix adds canopy refresh inside the update routine.
+- Map to: spl_account_compression, ConcurrentMerkleTree, canopy
+
+---
+
+## Finding 2
+
+- Pattern: Creator signature verification bypass on decompression — `decompress_v1` trusted a Token Metadata provision that allows creators who had previously signed a compressed NFT to decompress it with "verified" creator status, without requiring a fresh signature at decompression time. An attacker could verify a creator who never signed the decompression transaction.
+- Where it hit: `mpl-bubblegum` < 0.6.0 / `decompress_v1` instruction (GHSA-8r76-fr72-j32w)
+- Severity: HIGH
+- Source: https://github.com/advisories/GHSA-8r76-fr72-j32w — reported by @metamania01 (SolShield); fix in mpl-bubblegum 0.6.0, commit c18591a
+- Summary: Bubblegum's `decompress_v1` path relied on a Token Metadata rule that treated previously-signed compressed NFT creators as verified during decompression, without requiring a live signature. A malicious caller could invoke decompression and obtain an uncompressed NFT with a forged verified-creator flag, enabling royalty bypass and provenance fraud. Fixed by requiring explicit creator signature validation at decompression.
+- Map to: Bubblegum, decompress_v1, spl_account_compression
+
+---
+
+## Finding 3
+
+- Pattern: Missing creator signature check during mint — `utils/metadata.rs` in mpl-bubblegum failed to verify that all declared creators had signed the mint transaction. An attacker with low privilege could mint a compressed NFT with arbitrary creator metadata, including fabricated verified-creator fields, without holding the creator keys.
+- Where it hit: `mpl-bubblegum` (Rust crate) < 0.6.0 (SNYK-RUST-MPLBUBBLEGUM-3167971)
+- Severity: MEDIUM (CVSS 6.5; Snyk rating)
+- Source: https://security.snyk.io/vuln/SNYK-RUST-MPLBUBBLEGUM-3167971 — disclosed 2022-12-12; fix in mpl-bubblegum 0.6.0
+- Summary: The metadata utility function responsible for validating creator arrays during `mint_v1` did not check that each creator entry had a corresponding valid signature. Any caller could supply a creator list with `verified: true` for keys that never signed, permanently embedding false provenance in the NFT leaf. The fix adds explicit per-creator signature assertion in `utils/metadata.rs`.
+- Map to: Bubblegum, spl_account_compression
+
+---
+
+## Finding 4
+
+- Pattern: Delegate transfer missing mint-match assertion — the `transfer` instruction in `mpl-token-metadata` (which governs decompressed cNFTs post-`decompress_v1`) did not assert that the mint account referenced in the transfer matched the mint stored in the metadata account. A delegate could supply a mismatched mint account and transfer ownership of an NFT it was not authorized for.
+- Where it hit: `mpl-token-metadata` (Rust) > 1.7.0 and < 1.8.4 (GHSA-5233-j5mj-qxww)
+- Severity: HIGH
+- Source: https://github.com/metaplex-foundation/metaplex-program-library/security/advisories/GHSA-5233-j5mj-qxww — reported by SolShield; fix in mpl-token-metadata 1.8.4
+- Summary: The transfer instruction validated the delegate's authority but skipped a check confirming the supplied mint account corresponded to the metadata being operated on. A delegate could craft a transaction substituting a different mint, allowing unauthorized transfer of NFTs outside the scope of their delegation. Directly relevant to cNFT flows because decompressed cNFTs become standard Token Metadata NFTs subject to this same delegate-transfer path. Fixed by moving the mint-match assertion earlier in instruction validation.
+- Map to: Bubblegum, decompress_v1
+
+---
+
+## Finding 5
+
+- Pattern: Set-collection-during-mint missing self-program check — `set_collection_during_mint` in Candy Machine V2 verified the previous instruction's program ID but not that the current instruction originated from Candy Machine V2 itself. An attacker submitted a multi-instruction transaction where an initial instruction triggered bot-tax success, then a crafted subsequent instruction called `set_collection_during_mint` to inject arbitrary NFTs into a collection even after the machine was depleted or closed.
+- Where it hit: `mpl-candy-machine` (Rust) <= 4.5.0 (GHSA-9v25-r5q2-2p6w)
+- Severity: MEDIUM
+- Source: https://github.com/advisories/GHSA-9v25-r5q2-2p6w — reported by austbot; fix in mpl-candy-machine 4.5.1, commit e6b3aff
+- Summary: The collection-during-mint guard inspected the previous-instruction program ID (a common Solana anti-bot pattern) but omitted a check that the instruction itself came from the Candy Machine program. This let an attacker bypass supply limits and collection guards entirely. While this targets Candy Machine rather than SPL account compression directly, it is a directly applicable pattern for any Bubblegum wrapper that guards minting via instruction-introspection without verifying its own program origin.
+- Map to: Bubblegum, spl_account_compression
+
+---
+
+## Finding 6
+
+- Pattern: Bidder-pot token account substitution (auction program) — the `place_bid` instruction on the legacy Metaplex Auction program did not require the supplied `bidder_pot_token` account to be uninitialized on first use. An attacker substituted another bidder's existing pot account, merging both bids into one account, then called `cancel_bid` to drain the full balance.
+- Where it hit: Metaplex Auction smart contract (pre-2022 fix); write-up by Bonfida, January 2022
+- Severity: CRITICAL (100k bounty paid)
+- Source: https://github.com/Bonfida/metaplex-vulnerability-012022
+- Summary: The auction program's bid placement lacked a PDA uniqueness constraint on the pot token account. Because compressed NFT auctions on Solana marketplaces frequently relied on this auction contract, the vulnerability was reachable through any cNFT sale flow using the legacy program. The attacker could steal in-flight bids. Fixed by requiring the pot account to be uninitialized and deriving it as a PDA unique to the bidder and auction.
+- Map to: Bubblegum (marketplace integration context)
+
+---
+
+## Coverage Assessment
+
+Total findings: 6 (1 from local CSV, 5 from web research).
+
+Skill sections covered by at least one real finding:
+- Section 1b (canopy duplication / staleness): Finding 1
+- Section 5a/5c (decompression invariants, mint authority, metadata continuity): Findings 2, 3
+- Section 3a/3b (delegate scope, owner signature): Finding 4
+- Section 6a (program ID verification in instruction context): Finding 5
+- Indexer/marketplace integration (Section 4 adjacent): Finding 6
+
+Skill sections with no direct public finding located:
+- Section 2 (ConcurrentMerkleTree buffer saturation / concurrency): no public advisory found; pattern is well-documented in SPL design docs as an operational risk but no disclosed exploit found in searched sources as of April 2026.
+- Section 4 (indexer-trust boundary, unsigned proof): no public advisory found; described as a design risk in Helius documentation but no disclosed real exploit.
+- Section 6b/6c (noop log truncation, split-tx log): no public advisory found.
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

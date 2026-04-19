@@ -154,6 +154,98 @@ Tag: [TRACE:threshold_retroactively_enforced=YES/NO → proposal_expiry=YES/NO �
 - Protocol interacts with Squads only via UI, not CPI. Section 4 reduced.
 - Time-lock disabled by policy. Section 2 does not apply but must be documented.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+Sources: Neodyme audit (2023), OtterSec audit (2023), Trail of Bits audit (2023), ChainSecurity blog (2024), BlockSec/Drift post-mortem (2026), OtterSec multisig security blog (2025).
+
+---
+
+## Finding 1
+
+- Pattern: Approved proposal does not become stale after multisig config changes (member additions, removals, threshold changes). An attacker creates a multisig, creates and approves a vault withdrawal proposal, adds unsuspecting co-signers, waits for treasury to grow, then executes the pre-approved proposal for a rug pull.
+  Where it hit: Squads Protocol v4 — `vaultTransactionExecute` and `batchExecuteTransaction`, Neodyme audit finding ND-SQD1-M2
+  Severity: MEDIUM
+  Source: https://github.com/Squads-Protocol/v4/blob/main/audits/neodyme_squads_v4_report.pdf (page 13)
+  Summary: Once a proposal reached Approved status, it remained executable indefinitely regardless of subsequent multisig configuration changes. A single founding member could approve a withdrawal before adding co-signers, then execute the rug pull later. Fixed by introducing `stale_transaction_index`; vault and batch approved proposals can still execute if stale (design decision), but config transactions cannot.
+  Map to: squads_v4, Multisig, VaultTransaction, Proposal, execute_vault_transaction
+
+---
+
+## Finding 2
+
+- Pattern: Anyone can remove any multisig's spending limits and claim the rent. `config_transaction_execute` takes the SpendingLimit account from `remaining_accounts` without verifying it belongs to the current multisig, so an attacker creates their own multisig and calls `ConfigAction::RemoveSpendingLimit` targeting a victim's SpendingLimit PDA.
+  Where it hit: Squads Protocol v4 — `config_transaction_execute`, Neodyme audit finding ND-SQD1-M1
+  Severity: MEDIUM
+  Source: https://github.com/Squads-Protocol/v4/blob/main/audits/neodyme_squads_v4_report.pdf (page 12)
+  Summary: The `RemoveSpendingLimit` config action did not derive or validate that the supplied account was seeded from the current multisig. An unpermissioned attacker could drain rent from all SpendingLimit accounts across all squads and effectively disable the spending-limit feature protocol-wide. Fixed by requiring the SpendingLimit PDA to derive from the current multisig key.
+  Map to: squads_v4, Multisig, program_config
+
+---
+
+## Finding 3
+
+- Pattern: Front-running multisig creation via unauthenticated `create_key`. The multisig PDA is seeded by `create_key` which requires no signer check. An attacker monitoring the mempool copies `create_key` and creates the multisig first with a modified members list (injecting their own keys), then waits for the victim to deposit funds.
+  Where it hit: Squads Protocol v4 — `multisig_create`, Trail of Bits audit finding TOB-SQUADS-7
+  Severity: HIGH
+  Source: https://github.com/Squads-Protocol/v4/blob/main/audits/trail_of_bits_squads_v4_security_audit.pdf (page 27)
+  Summary: Because `create_key` is a plain `AccountInfo` with no signer constraint, any observer can race to initialize the same multisig PDA with attacker-controlled members. The victim, unaware of the substitution, deposits funds into vaults the attacker can drain. Fixed by requiring `create_key` to sign the `multisig_create` instruction.
+  Map to: squads_v4, Multisig, create_proposal
+
+---
+
+## Finding 4
+
+- Pattern: Executor can override account writability flags during `execute_message`. The instruction reconstruction reads `is_writable` from the runtime `AccountInfo` rather than from the stored `VaultTransactionMessage`, so the executor passes accounts as writable even if the original proposal marked them read-only, potentially altering downstream program behavior.
+  Where it hit: Squads Protocol v4 — `execute_message` in `utils/executable_transaction_message.rs`, OtterSec audit finding OS-SQD-ADV-00
+  Severity: LOW
+  Source: https://github.com/Squads-Protocol/v4/blob/main/audits/ottersec_squads_v4_audit_2024.pdf (page 5)
+  Summary: Account writability was derived from the live `AccountInfo.is_writable` field rather than the approved `VaultTransactionMessage` payload. A malicious executor could escalate accounts to writable, violating transaction non-malleability — the core security invariant that execution matches exactly what signers approved. Fixed in commit c3d2177 by reading writability from `loaded_writable_accounts`.
+  Map to: squads_v4, VaultTransaction, execute_vault_transaction
+
+---
+
+## Finding 5
+
+- Pattern: Address Lookup Tables (ALTs) used in an unfrozen state allow post-approval buffer manipulation. A malicious proposer appends new entries to an unfrozen ALT after approvers have voted, changing the effective accounts of the transaction before execution. Approvers believe they approved payload A but execute payload B.
+  Where it hit: Squads Protocol v4 — `vaultTransactionCreate` / `batchAddTransaction`, Neodyme audit finding ND-SQD1-L1
+  Severity: LOW
+  Source: https://github.com/Squads-Protocol/v4/blob/main/audits/neodyme_squads_v4_report.pdf (page 14)
+  Summary: ALTs are append-only but mutable until frozen. A transaction proposal referencing an unfrozen ALT at out-of-bounds indices at creation time can be made valid post-approval by appending attacker-controlled entries. Reviewers cannot detect this unless they also monitor the ALT. Full on-chain enforcement was declined due to ecosystem interoperability (many major programs do not freeze ALTs); mitigated by a UI warning.
+  Map to: squads_v4, VaultTransaction, Proposal, execute_vault_transaction
+
+---
+
+## Finding 6
+
+- Pattern: Durable nonce abuse bypasses the 2-minute blockhash expiry safety window. An attacker (or compromised signer) collects multisig approvals on a proposal transaction that uses a durable nonce, holds them indefinitely, then executes when operationally convenient — weeks later. The standard defence of waiting for a blockhash to expire does not apply.
+  Where it hit: Drift Protocol (uses Squads V4 multisig for admin authority) — real exploit April 1 2026, $285M drained
+  Severity: CRITICAL (real-world impact)
+  Source: https://blocksec.com/blog/drift-protocol-incident-multisig-governance-compromise-via-durable-nonce-exploitation
+  Summary: Two durable nonce accounts linked to Drift's admin multisig signers were created on March 23 2026. Pre-signed `proposalApprove` transactions against those nonces were held for 9 days. On April 1, the attacker called `AdvanceNonceAccount`, `proposalApprove`, and `vaultTransactionExecute` to transfer admin control, then created a malicious collateral market, inflated CVT oracle prices, and extracted $285M across 31 withdrawals in 12 minutes. Squads' own contracts were not flawed; the attack was a governance-layer compromise enabled by zero-timelock configuration and durable nonce support.
+  Map to: squads_v4, Multisig, VaultTransaction, Proposal, execute_vault_transaction
+
+---
+
+## Finding 7
+
+- Pattern: Downstream protocol access-control using `instruction_sysvar` / `get_instruction_relative()` breaks when the protocol integrates Squads. The sysvar only reflects the outermost instruction; when a CPI call originates from Squads' `batch_execute_transaction`, `get_instruction_relative(0)` returns the Squads program ID instead of the expected caller, causing the check to reject authorized multisig-routed operations.
+  Where it hit: WBTC on Solana controller (Squads integration audit), ChainSecurity audit
+  Severity: HIGH (operational — authorized multisig members unable to mint or burn WBTC)
+  Source: https://www.chainsecurity.com/blog/www-chainsecurity-com-blog-designing-for-squads-a-lesson-in-solana-authorization
+  Summary: The WBTC factory's authorization model introspected the instruction stack to assert the immediate caller was the factory program. This assumption fails when the factory is invoked as a CPI inside Squads' execution context: the sysvar sees `batch_execute_transaction` as the top-level instruction, not the factory. Fixed by replacing instruction-stack introspection with PDA-signer-based authorization, where the factory signs via its own `factory_store` PDA regardless of call depth.
+  Map to: squads_mpl, squads_v4, VaultTransaction, execute_vault_transaction
+
+---
+
+## Coverage note
+
+7 findings documented (target was 5-10). The local CSV contained 2 (TOB-SQUADS-7 front-run and TOB-SQUADS-8 ephemeral key collision). The 5 additional findings above are verified against primary sources: two Neodyme audit PDFs, one OtterSec audit PDF, one Trail of Bits audit PDF, one BlockSec post-mortem, and one ChainSecurity blog post.
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

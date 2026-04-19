@@ -10,3 +10,6 @@ __pycache__/
 
 # Audit working directory (separate repo, not tracked here)
 2025-09-super-dca-heavyw8t/
+
+# Injectable-skill raw candidate pools — regenerable from solodit_findings.dedup.csv
+nextup/agents/skills/injectable/*/candidates.jsonl

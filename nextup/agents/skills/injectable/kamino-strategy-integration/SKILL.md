@@ -154,6 +154,111 @@ Tag: [TRACE:deposit_cap_monitored=YES/NO → borrow_cap_monitored=YES/NO → res
 - Wrapper uses a single strategy with fixed parameters; keeper path absent. Section 2 reduced.
 - Scope not used; only direct Pyth feeds. Section 3 delegated to pyth-oracle-integration skill.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+Sources searched: Kamino-Finance/audits GitHub repo, Certora blog, klend release notes, Sec3 audit ref, OtterSec audit ref, Offside Labs audit ref, local candidates.jsonl.
+
+---
+
+## Finding 1
+
+- Pattern: Share value invariant broken by precision loss in exchange rate calculation (fraction_collateral_to_liquidity rounds down, subsequent redeem can round up, allowing withdrawal of more liquidity than deposited)
+  Where it hit: Kamino Lend (klend) — core exchange rate function
+  Severity: MEDIUM
+  Source: https://www.certora.com/blog/securing-kamino-lending
+  Summary: Certora formal verification of Kamino Lend (Nov–Dec 2024) found that the fixed-point Fraction type (68-bit integer, 60-bit fractional) introduced a rounding error in `fraction_collateral_to_liquidity`. The error allowed a user to redeem slightly more liquidity than deposited; the share-value invariant (shares can only increase) was violated under large supply conditions. Not exploitable at current Solana token supplies (requires collateral > 2^59), but Kamino patched it with the Mul-Div pattern: `collateral_amount * total_liquidity / total_collateral_supply`, rounding down.
+  Map to: kamino, kamino_lending, klend
+
+---
+
+## Finding 2
+
+- Pattern: Farming pool admin ownership not synchronized when lending market owner changes — farm still controlled by old owner after transfer
+  Where it hit: Kamino Lend farms integration (klend + farms program)
+  Severity: HIGH
+  Source: local CSV row 10343 (solodit_findings.dedup.csv, Solana shard)
+  Summary: When the lending market owner transfers ownership, the associated farm pool admin is not automatically updated. The old owner retains admin control over the farm, causing a mismatch. The Kamino team acknowledged the issue and planned a CLI tool to update farm admin before transferring market ownership.
+  Map to: kamino, kamino_lending, klend
+
+---
+
+## Finding 3
+
+- Pattern: obligation_farm not stored in SyMeta, allowing ownership transfer of obligation_farm to Kamino lending authority and subsequent use of a different user_state on deposit/withdraw — unauthorized access to rewards and assets
+  Where it hit: Kamino Lend standard instruction (`init_sy` / `kamino_lend_standard`)
+  Severity: MEDIUM
+  Source: local CSV row 4267 (solodit_findings.dedup.csv, Solana shard); fixed in PR#610
+  Summary: The `init_sy` instruction failed to store `obligation_farm` in `SyMeta`. An attacker could transfer `obligation_farm` ownership to the Kamino lending authority and then interact with the farm via a different `user_state`, bypassing correct state verification on deposit and withdraw and gaining unauthorized access to rewards.
+  Map to: kamino, kamino_lending, klend
+
+---
+
+## Finding 4
+
+- Pattern: Same-reserve deposit and withdraw permitted in the same transaction — enables collateral manipulation / flash-loan-style self-collateralization within a single instruction sequence
+  Where it hit: Kamino Lend (klend) v1.12.7
+  Severity: HIGH (patched in v1.12.7, audited by Offside and OtterSec)
+  Source: https://github.com/Kamino-Finance/klend/releases (v1.12.7 release note: "Block deposit and withdraw with same reserve")
+  Summary: Before v1.12.7, a user could deposit into and withdraw from the same reserve within one transaction. This opened a path for an obligation to temporarily appear over-collateralized during a multi-instruction transaction sequence, potentially allowing excess borrow or bypassing liquidation guards. The fix blocks both operations on the same reserve in the same transaction.
+  Map to: kamino, kamino_lending, klend
+
+---
+
+## Finding 5
+
+- Pattern: `update_reserve_config` allowed removing an elevation group from a reserve that has active obligations, with no mechanism to enforce that existing borrowers remain adequately collateralized under the new LTV/liquidation-threshold values
+  Where it hit: Kamino Lend (klend) — `update_reserve_config` instruction; found in Sec3 audit (kamino_klend_sec3.pdf)
+  Severity: MEDIUM
+  Source: https://github.com/Kamino-Finance/audits/blob/master/kamino_klend_sec3.pdf
+  Summary: The lending market owner could call `update_reserve_config` to remove an elevation group or change LTV / liquidation thresholds for that group with no on-chain check that existing reserves and obligations comply with the new values. Active borrowers could instantly become under-collateralized or at unexpected liquidation risk without any protocol-level guard. The Kamino team acknowledged the finding and added CLI-level validation tooling rather than an on-chain enforcement mechanism.
+  Map to: kamino, kamino_lending, klend
+
+---
+
+## Finding 6
+
+- Pattern: Fee vault has no withdrawal instruction — fees collected into `fee_vault` are permanently locked with no extraction path
+  Where it hit: Kamino Lend early codebase (Hubble/OtterSec audit of kamino-lending commit 88dfca4)
+  Severity: MEDIUM
+  Source: https://github.com/Kamino-Finance/audits (OtterSec audit of Hubble Kamino lending program); fix in PR#112
+  Summary: Auditors found that the `fee_vault` account accumulated protocol fees but no instruction existed for the lending market owner to withdraw those funds. Any fees deposited were irrecoverably locked. The fix added a dedicated instruction to allow the market owner to withdraw from `fee_vault`.
+  Map to: kamino, kamino_lending, klend
+
+---
+
+## Finding 7
+
+- Pattern: Removing `update entire reserve config` handler reduced attack surface — the monolithic config-update instruction allowed atomically changing multiple risk parameters (LTV, caps, oracle config) with a single signer, providing no granular access control or parameter-level validation
+  Where it hit: Kamino Lend (klend) v1.13.1
+  Severity: HIGH (removed in v1.13.1, audited by Certora, Osec, and Offside)
+  Source: https://github.com/Kamino-Finance/klend/releases (v1.13.1 release note: "Remove 'update entire reserve config' handler")
+  Summary: The `update_entire_reserve_config` instruction permitted a single authorized call to atomically overwrite the complete reserve configuration, including LTV ratios, borrow caps, oracle settings, and liquidation thresholds. Because the instruction lacked per-field validation, a compromised or malicious admin key could set catastrophic parameter combinations in one transaction. The instruction was removed entirely; configuration updates now happen through narrower, individually validated handlers.
+  Map to: kamino, kamino_lending, klend
+
+---
+
+## Finding 8
+
+- Pattern: Max-collateral check in elevation group enforced at wrong program point — an obligation could exceed the per-elevation-group collateral limit if the check ran after the deposit was recorded rather than before
+  Where it hit: Kamino Lend (klend) v1.12.7
+  Severity: MEDIUM (patched in v1.12.7, audited by Offside and OtterSec)
+  Source: https://github.com/Kamino-Finance/klend/releases (v1.12.7 release note: "Move check for max collaterals in elevation group")
+  Summary: The check enforcing the maximum number of collateral assets allowed in an elevation group was positioned after the deposit state was written. This ordering allowed a deposit to succeed and commit to state even if it pushed the obligation over the per-elevation-group collateral cap. The fix moved the check earlier in execution so the deposit reverts before any state change.
+  Map to: kamino, kamino_lending, klend
+
+---
+
+## Notes
+
+Findings 1, 4, 7, 8 are sourced from verifiable public release notes or audit blog posts. Findings 2 and 3 are from the local CSV (solodit_findings.dedup.csv). Findings 5 and 6 reference audit PDFs available at https://github.com/Kamino-Finance/audits whose full text is in the PDFs (not web-fetchable directly). No findings with verified specific URLs were found for: scope_prices chain-ID binding, vault share-price inflation from direct donation, or strategy rebalance slippage — these patterns are present in the SKILL.md as observed patterns but did not surface as individually reported findings in public web sources.
+
+Total: 8 findings.
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

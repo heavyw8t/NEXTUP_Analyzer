@@ -220,6 +220,69 @@ Tag: `[TRACE:claim_flow={protocol/user_direct} → multi_claim_prevented={YES/NO
 - **No slashing enabled**: If the protocol's AVS has not activated slashing (slashing is opt-in per AVS and was launched later), slashing sections don't apply yet — but should be flagged as a future risk
 - **Testnet only**: If EigenLayer integration is testnet-only (Holesky), mainnet-specific timing and economic concerns don't apply
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Operator self-undelegation manipulates LRT exchange rate and traps EigenPod shares
+  Where it hit: Rio Network Core Protocol (OperatorDelegator / EigenLayer DelegationManager integration)
+  Severity: HIGH
+  Source: Solodit (row_id 7979)
+  Summary: An operator can call `undelegate` on itself in EigenLayer's DelegationManager. This queues all strategy shares for withdrawal and removes EigenPod shares from the delegator, causing a sharp drop in the protocol's reported TVL and the LRT exchange rate. ETH/LST becomes stuck until the Rio Delegator Approver processes the queued withdrawal, and no access control in the operator delegator contract prevents this. The protocol placed trust in operators that EigenLayer's model does not enforce.
+  Map to: IDelegationManager, IEigenPod, operator, restake
+
+- Pattern: Unrestricted `claimCompletedWithdrawals` resets `_pendingWithdrawalAmount` to zero, corrupting vault share ratio
+  Where it hit: Tagus protocol (EigenLayer restaking vault)
+  Severity: HIGH
+  Source: Solodit (row_id 5187)
+  Summary: The `claimCompletedWithdrawals()` function is callable by anyone. It decrements `_pendingWithdrawalAmount` regardless of who initiated the withdrawal, resetting the variable to zero prematurely. Because `getTotalDeposited()` uses this variable, the vault's asset-to-share ratio is distorted after any external caller triggers the function. The fix restricts callers to known restakers tracked by the contract.
+  Map to: IDelegationManager, IStrategy, vault-accounting, restake
+
+- Pattern: Share appreciation in EigenLayer makes withdrawal settlement permanently impossible
+  Where it hit: Rio Network Core Protocol (withdrawal settlement path)
+  Severity: HIGH
+  Source: Solodit (row_id 7976)
+  Summary: When EigenLayer strategy shares appreciate (tokens per share increases), the protocol's internal calculation of how many shares are needed to cover a queued withdrawal can exceed the shares actually held. The settlement call reverts unconditionally, blocking all further withdrawals for the affected epoch. No fallback or partial-settlement path exists. The root cause is that the share-to-asset conversion is computed at settlement time rather than at queue time, and appreciation is not bounded.
+  Map to: IDelegationManager, IStrategy, vault-accounting, restake
+
+- Pattern: Strategy cap set to zero does not drain withdrawal queue, causing double-counted shares
+  Where it hit: Rio Network Core Protocol (operator registry / withdrawal queue)
+  Severity: HIGH
+  Source: Solodit (row_id 7980)
+  Summary: When the admin sets a strategy's allocation cap to zero (or force-exits an operator), the total shares held in EigenLayer are not decremented and the withdrawal queue is not updated. On the next rebalance, the system attempts to withdraw more than the remaining allocation allows. Shares are effectively double-counted: once in the operator's live allocation and again in a withdrawal queue entry that was never created. The fix is to update the withdrawal queue whenever the operator registry changes an EigenLayer share allocation to zero.
+  Map to: IDelegationManager, IStrategy, operator, ISlasher
+
+- Pattern: `slashQueuedWithdrawal` destroys shares mid-flight but `pendingWithdrawalSharesAmount` is never decremented, minting unbacked LRT
+  Where it hit: Puffer Finance (PufferVault / EigenLayer withdrawal lifecycle)
+  Severity: HIGH
+  Source: Solodit (row_id 7984)
+  Summary: If `slashQueuedWithdrawal()` is called while a withdrawal is queued, EigenLayer destroys the shares but `completeQueuedWithdrawal()` subsequently reverts permanently. The protocol's `eigenLayerPendingWithdrawalSharesAmount` state variable is never decremented on this failure path. `totalAssets()` permanently overstates holdings by the phantom amount, and new pufETH can be minted against the ghost backing. This finding is cited directly in the SKILL.md withdrawal-failure pattern.
+  Map to: IDelegationManager, ISlasher, IEigenPod, restake, vault-accounting
+
+- Pattern: Incorrect beacon chain slashing factor scaling allows stakers to withdraw more than their post-slash entitlement
+  Where it hit: EigenLayer core (EigenPodManager `_reduceSlashingFactor`)
+  Severity: HIGH
+  Source: Solodit (row_id 2768)
+  Summary: `_reduceSlashingFactor()` in `EigenPodManager` computes a new beacon chain slashing factor without scaling the previous restaked balance by the deposit scaling factor. The resulting factor is too large, so the withdrawable share calculation overstates the staker's entitlement after a slash event. An integrating protocol that reads withdrawable shares from `EigenPodManager` will see inflated values and may distribute more assets than are actually backed. The team acknowledged the edge case and planned documentation updates.
+  Map to: IEigenPod, ISlasher, restake
+
+- Pattern: Slashing penalty during active withdrawal is paid entirely by the first cohort to complete, not spread pro-rata
+  Where it hit: EigenLayer core (EigenPodManager deficit accounting)
+  Severity: MEDIUM
+  Source: Solodit (row_id 7964)
+  Summary: When a deficit accumulates in `EigenPodManager` due to slashing that occurs while withdrawals are queued, the full deficit is absorbed by whoever completes withdrawal first rather than being distributed across all affected stakers. A protocol that wraps EigenLayer and allows concurrent queued withdrawals will silently transfer the entire loss to the earliest settler. The issue requires no special access and is triggered by normal withdrawal completion ordering.
+  Map to: IEigenPod, ISlasher, IDelegationManager, restake
+
+- Pattern: Empty Merkle proof bypasses `verifyAndProcessWithdrawal`, enabling double withdrawal from EigenPod
+  Where it hit: EigenLayer core (Merkle.sol, BeaconChainProofs.sol, EigenPod.sol)
+  Severity: HIGH
+  Source: Solodit (row_id 12165)
+  Summary: `verifyInclusionSha256` and `verifyInclusionKeccak` in the Merkle library return `true` when the proof array is empty and the leaf equals the root. `verifyWithdrawalProofs` does not require non-zero proof lengths, so a caller can supply a crafted single-element proof where leaf == root. `verifyAndProcessWithdrawal` in `EigenPod` accepts this, allowing an attacker to replay a withdrawal proof and credit shares multiple times. Any protocol that calls `EigenPod.verifyAndProcessWithdrawal` on behalf of users is exposed to share inflation.
+  Map to: IEigenPod, restake
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

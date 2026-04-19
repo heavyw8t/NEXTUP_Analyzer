@@ -154,6 +154,55 @@ Tag: [TRACE:bank_oracle_matched=YES/NO â†’ oracle_setup_variant_handled=YES/NO â
 - Protocol uses MarginFi only for a single well-known bank on SOL. Sections 3, 2c, 6c reduced.
 - Claims are done through MarginFi UI directly, not wrapper. Section 5 delegated.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Struct layout mismatch in marginfi-CPI library (missing padding bytes in Balance struct causes incorrect field reads)
+  Where it hit: Any protocol that deserializes a MarginFi `Balance` account via the CPI library directly; fields after the missing padding are misread, producing corrupted health or share values
+  Severity: HIGH
+  Source: Solodit (row_id 4271)
+  Summary: The marginfi-CPI library's `Balance` struct omitted padding bytes present in the canonical marginfi program struct. Code that reads balance fields via the CPI type gets wrong numeric values from those fields. Any health check or share accounting built on those reads is silently incorrect.
+  Map to: MarginfiAccount, lending_account_deposit, lending_account_withdraw, lending_account_borrow
+
+- Pattern: Incorrect ABI encoding of withdraw_all flag (single byte instead of Option<bool>) in withdraw CPI call
+  Where it hit: Wrapper programs that build the `lending_account_withdraw` instruction data manually and pass `withdraw_all` as a raw `u8`; MarginFi expects `Option<bool>` (two-byte encoding), so the flag is misread and partial/full withdrawal behaves unexpectedly
+  Severity: MEDIUM
+  Source: Solodit (row_id 4270)
+  Summary: The `marginfi_cpi::withdraw_from_lending_account` implementation encoded the `withdraw_all` parameter as a single byte. MarginFi's on-chain instruction parser expects `Option<bool>`, which is two bytes. The mismatch causes the flag to be silently misinterpreted, meaning a caller requesting full withdrawal may only partially withdraw or vice versa.
+  Map to: lending_account_withdraw
+
+- Pattern: Missing account-index validation on deposit/withdraw allows a new MarginfiAccount to reuse existing mints, causing incorrect fund allocation
+  Where it hit: Protocols that create a new MarginFi account alongside existing ones and pass an unchecked `marginfi_account_idx`; funds land in the wrong bank slot
+  Severity: HIGH
+  Source: Solodit (row_id 5121)
+  Summary: The deposit and withdraw instructions did not validate `marginfi_account_idx` against the length of `whitelisted_token_mints`. A caller could pass an index referencing a mint already registered under a different account, routing deposits or withdrawals to the wrong bank. The fix requires bounding the index and capping `whitelisted_token_mints` at 16 entries.
+  Map to: MarginfiAccount, MarginfiGroup, lending_account_deposit, lending_account_withdraw
+
+- Pattern: Receipt tokens not burned before CPI into MarginFi withdraw, leaving redeemable receipt tokens outstanding after withdrawal
+  Where it hit: Restaking or vault wrappers that call `lending_account_withdraw` to unlock user funds but only burn receipt tokens after the CPI returns, or omit the burn entirely
+  Severity: MEDIUM
+  Source: Solodit (row_id 5119)
+  Summary: After withdrawing tokens from the restaking program, the implementation did not destroy the receipt tokens representing the user's stake. Those tokens remained valid and could be reused to claim funds a second time. The correct fix burns receipt tokens before invoking the MarginFi CPI to ensure atomicity.
+  Map to: lending_account_withdraw, MarginfiAccount
+
+- Pattern: Reward emission basis uses wrong token type (YT instead of SY), producing inaccurate reward distribution and incorrect lambo_fund calculation
+  Where it hit: Vault programs that integrate MarginFi reward emission and track yield via a YieldTokenTracker; any path that calls the reward distribution logic emits the wrong amount per user
+  Severity: HIGH
+  Source: Solodit (row_id 4272)
+  Summary: The vault program computed reward shares using YT token balances where the marginfi-standard program uses SY token balances. Because YT and SY amounts diverge over time, reward payouts were proportionally wrong for every user. The `lambo_fund` accrual in `YieldTokenTracker` was also affected, causing accumulated fee calculations to be incorrect.
+  Map to: marginfi, MarginfiAccount
+
+- Pattern: Rewards deposited into MarginFi account via collect_rewards with no corresponding withdrawal instruction, permanently locking reward funds
+  Where it hit: Protocols that call `collect_rewards` to deposit protocol-earned rewards into a MarginFi account but expose no instruction to withdraw or redirect those rewards
+  Severity: HIGH
+  Source: Solodit (row_id 5120)
+  Summary: The `collect_rewards` instruction deposited earned rewards into a designated MarginFi account but the program provided no mechanism to withdraw or transfer them out. Rewards accumulated indefinitely with no recovery path. A new withdraw-rewards instruction was required to resolve the lockup.
+  Map to: MarginfiAccount, lending_account_withdraw
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

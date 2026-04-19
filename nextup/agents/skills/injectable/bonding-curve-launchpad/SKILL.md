@@ -154,6 +154,62 @@ Tag: [TRACE:migration_state_flag=YES/NO → pda_seed_strict=YES/NO → lp_burned
 - Initial supply fully allocated to the curve, no creator tail. Section 4c does not apply.
 - Linear-sum curve instead of constant product changes section 1 constants but same rounding concerns apply.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Migration config variable not persisted through admin update
+  Where it hit: Pump Science — `Global::update_settings` omits write to `migration_token_allocation`
+  Severity: HIGH
+  Source: Solodit (row_id 2251)
+  Summary: The `migration_token_allocation` field in the `Global` struct is read during migration but never written by the settings-update instruction. An admin calling `update_settings` leaves this value at its initialized default regardless of the intended change. Migration executes with stale allocation, misrouting tokens.
+  Map to: liquidity_migration, bonding_curve
+
+- Pattern: PDA-derived account pre-creation DoS on pool lock
+  Where it hit: Pump Science — `lock_pool` / `create_lock_escrow` with predictable PDA seeds
+  Severity: HIGH
+  Source: Solodit (row_id 2252)
+  Summary: The `lock_escrow` account is derived from `pool` and `owner` seeds, which any observer can compute. An attacker creates the account before the legitimate `create_lock_escrow` transaction, causing it to fail with an account-already-exists error. This permanently blocks `lock_pool` for that pool unless a recovery path exists.
+  Map to: liquidity_migration
+
+- Pattern: Real reserve drift from direct external SOL transfer
+  Where it hit: Pump Science bonding curve — `bonding_curve_sol_escrow` vs `real_sol_reserves`
+  Severity: HIGH
+  Source: Solodit (row_id 2975)
+  Summary: The protocol enforces `sol_escrow_lamports == real_sol_reserves` only inside swap instructions. A direct SOL transfer to the escrow account (outside any instruction) widens the gap without triggering a sync. Once the invariant is broken the protocol halts all swaps until a manual sync function is called.
+  Map to: virtual_sol_reserves, bonding_curve
+
+- Pattern: ATA existence check via lamport balance enables DoS on pool lock
+  Where it hit: Pump Science — `lock_pool` ATA creation for LP tokens
+  Severity: HIGH
+  Source: Solodit (row_id 2976)
+  Summary: The LP-token ATA creation step inside `lock_pool` checks whether the `escrow_vault` has lamports to decide if the ATA must be created. An attacker sends a dust SOL amount to the vault address before the transaction, making the check evaluate as "already funded" and skipping ATA creation. The subsequent token transfer then fails, denying pool lock to all users.
+  Map to: liquidity_migration
+
+- Pattern: Phase-boundary discontinuity in fee schedule causes sudden drop
+  Where it hit: Pump Science fee calculation — phase transition boundary
+  Severity: MEDIUM
+  Source: Solodit (row_id 2248)
+  Summary: The fee formula produces 8.76% on the last slot of one phase and 1% on the first slot of the next, with no interpolation at the boundary. A buyer who times the phase transition captures the fee delta as profit at the protocol's expense. The fix requires recalibrating formula coefficients so the two phase curves meet at the boundary.
+  Map to: bonding_curve
+
+- Pattern: Invariant check incorrectly includes rent in lamport balance comparison
+  Where it hit: Pump Science — bonding curve invariant check comparing `sol_escrow_lamports` to `real_sol_reserves`
+  Severity: MEDIUM
+  Source: Solodit (row_id 2249)
+  Summary: `sol_escrow_lamports` is the total lamport balance including rent-exemption deposit, while `real_sol_reserves` tracks only tradeable SOL. Comparing them directly makes the invariant always appear violated by the rent amount, causing false-positive halts or allowing the check to be bypassed depending on the error-handling path.
+  Map to: virtual_sol_reserves, bonding_curve
+
+- Pattern: Token account init fails if account pre-exists, enabling DoS on curve creation
+  Where it hit: Pump Science — `CreateBondingCurve` instruction, `bonding_curve_token_account`
+  Severity: MEDIUM
+  Source: Solodit (row_id 2971)
+  Summary: The `bonding_curve_token_account` constraint uses `init` with `associated_token::mint` and `associated_token::authority`, so the account address is fully predictable. Any attacker can create the token account first, causing every subsequent `CreateBondingCurve` call for that mint to fail. Changing the constraint to `init_if_needed` removes the attack surface.
+  Map to: bonding_curve
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

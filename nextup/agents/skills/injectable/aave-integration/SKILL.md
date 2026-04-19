@@ -207,6 +207,83 @@ Tag: `[TRACE:pool_resolution={addresses_provider/hardcoded} → governance_impac
 - **Single-reserve interaction**: If the protocol only interacts with one specific Aave reserve (not configurable), many reserve-change governance risks are reduced
 - **Flash loan receiver is a dedicated contract**: If the flash loan callback is in a separate contract that only the main protocol can call, initiator validation is less critical
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Protocol caches aToken balance as static shares, never rebases; users withdraw only principal, not interest
+  Where it hit: AaveYield.lockTokens / SavingsAccount (Sublime Finance)
+  Severity: HIGH
+  Source: Solodit (row_id 16997)
+  Summary: When a user deposits into Aave via `AaveYield.lockTokens`, the protocol stores the deposited amount as a fixed `balanceInShares` entry, treating aTokens like non-rebasing tokens. On withdrawal, users receive only the original deposit amount because the shares value never grows with accrued interest. The collateral pool is also measured without accrued interest, leading to premature liquidations.
+  Map to: aToken, scaledBalanceOf, reserveData
+
+- Pattern: Stale aToken TVL snapshot used for LP mint calculation; attacker sandwiches deposit to steal accumulated interest
+  Where it hit: LPIssuer.push / aaveVault.transferAndPush (Mellow Protocol / yield aggregator)
+  Severity: HIGH
+  Source: Solodit (row_id 17031)
+  Summary: The protocol's `push` path reads `_tvls` (cached aToken balance) into memory before calling `transferAndPush`, which deposits into Aave and triggers an aToken rebase. The LP mint calculation uses the pre-rebase TVL, so a large deposit receives LP proportional to the old TVL while actually buying into the rebased TVL. An attacker can flash-loan a large amount, deposit to capture nearly all outstanding LP, withdraw for half the new rebased TVL (including historical interest), and profit.
+  Map to: aToken, liquidityIndex, flashLoan
+
+- Pattern: Flash loan callback (`executeOperation`) validates `msg.sender == pool` but not `initiator`; attacker triggers arbitrary protocol operations
+  Where it hit: SuperVault.executeOperation / SuperVault.sol (MIMO Protocol)
+  Severity: HIGH
+  Source: Solodit (row_id 16003)
+  Summary: The `executeOperation` callback checks that `msg.sender` is the Aave lending pool, but does not verify that the flash loan was initiated by the protocol itself. An attacker calls `lendingPool.flashLoan(superVault, ...)` with crafted `params` encoding an `Operation.REBALANCE` action. The vault processes the attacker-supplied parameters, executing unwanted collateral swaps at bad prices or burning flash-loan fee from the vault's own balance. The attack is repeatable until the vault is drained.
+  Map to: flashLoan, healthFactor
+
+- Pattern: eMode leverage strategy queries base pool settings instead of eMode-category settings, making higher-LTV leverage impossible
+  Where it hit: AaveLeverageStrategyExtension.sol lines 1095-1109 (Index Coop)
+  Severity: HIGH
+  Source: Solodit (row_id 11413)
+  Summary: When eMode is active, `AaveLeverageStrategyExtension` calls `getReserveData()` on the base pool to determine LTV and liquidation threshold. These values are lower than the eMode-specific values returned by `getEModeCategoryData()`. As a result, the extension calculates a leverage target far below what eMode allows, and critically, may compute health-factor safety margins incorrectly. eMode functionality is entirely broken; attempts to leverage in eMode produce erratic and potentially unsafe positions.
+  Map to: emodeCategory, reserveData, healthFactor
+
+- Pattern: Shared Aave account inadvertently enters isolation mode via user-deposited isolated asset, locking all other borrowers
+  Where it hit: Morpho / single Aave position shared across all users
+  Severity: HIGH
+  Source: Solodit (row_id 12038)
+  Summary: Morpho maintains a single Aave V3 position that aggregates all user deposits. If any user supplies an isolation-mode asset as collateral, Morpho's whole position enters Aave isolation mode. Isolation mode restricts borrowing to a specific stablecoin and caps total debt. All other Morpho users sharing the position lose the ability to borrow non-isolated assets. The attack can be executed by any user who deposits a supported isolation-mode token.
+  Map to: isolation_mode, reserveData
+
+- Pattern: LTV-0 aToken governance change blocks withdrawals, borrows, and liquidations for protocols holding that collateral
+  Where it hit: Morpho / PositionsManagerForAave (Morpho-Aave V3)
+  Severity: HIGH
+  Source: Solodit (row_id 12044)
+  Summary: When Aave governance sets an asset's LTV to 0, Aave blocks `withdraw`, `transfer`, and `setUserUseReserveAsCollateral` on that aToken if it is marked as collateral. For Morpho, which uses a single on-Aave position, this means users cannot withdraw their collateral, borrow, be liquidated, or claim rewards that include the zero-LTV aToken. No recovery path exists unless Morpho explicitly sets the asset as non-collateral before the governance change takes effect.
+  Map to: aToken, healthFactor, reserveData
+
+- Pattern: Aave position on underlying protocol liquidated externally; protocol's internal accounting desynchronizes, enabling double-liquidation
+  Where it hit: PositionsManagerForAaveGettersSetters.sol (Morpho)
+  Severity: HIGH
+  Source: Solodit (row_id 15085)
+  Summary: Morpho holds a single Aave position representing all user collateral and debt. If this position becomes undercollateralized, an external liquidator can liquidate it directly on Aave, seizing collateral and repaying debt. However, Morpho's own user-level accounting is never updated; the affected user's supply and debt balances remain at pre-liquidation values. A second liquidation on Morpho for the same user is then possible, earning a second liquidation bonus, with the loss distributed across remaining depositors.
+  Map to: healthFactor, aToken, reserveData
+
+- Pattern: Protocol stores pool address at init with `safeApprove`; if Aave pool address changes, deposits break permanently until redeployment
+  Where it hit: yearnV2-generic-lender-strat / deposit() line 132
+  Severity: HIGH
+  Source: Solodit (row_id 17967)
+  Summary: The strategy calls `safeApprove(lendingPool, MAX)` once during initialization. If Aave upgrades the pool (the proxy implementation changes) or the strategy is pointed at a new pool via `setAavePool`, the old approval sits on the stale address and the new pool has no approval. All subsequent `deposit()` calls revert with insufficient allowance until the contract is replaced. The correct pattern is to call `safeApprove` on demand or use `IPoolAddressesProvider.getPool()` to resolve the current address dynamically.
+  Map to: IPool, reserveData
+
+- Pattern: `setAavePool` does not use `PoolAddressesProvider`; old pool approval not revoked, new pool not approved; protocol enters broken state
+  Where it hit: setAavePool function (unspecified strategy contract)
+  Severity: MEDIUM
+  Source: Solodit (row_id 640)
+  Summary: The function that updates the active Aave pool address neither revokes approval from the old pool nor grants approval to the new one. During the window between deprecating the old pool and completing the update, the protocol is inoperable. The root cause is hardcoding the pool address rather than querying `IPoolAddressesProvider.getPool()` on every access. A proof-of-concept test confirms the DoS condition persists until a new contract is deployed.
+  Map to: IPool, reserveData
+
+- Pattern: No handling for Aave reserve pause or supply-cap exhaustion; integrating protocol's deposits revert with no recovery path
+  Where it hit: AaveV3FiatReserve._update / CompoundV3FiatReserve (Perennial / DSU)
+  Severity: MEDIUM
+  Source: Solodit (row_id 4520)
+  Summary: The DSU protocol routes reserve funds into Aave V3. If the Aave reserve is paused, the deposit cap is reached, or the pool is retired, the `_update` function reverts with no fallback. Users are then unable to deposit or withdraw DSU because every flow that must balance the reserve calls `_update`. An attacker can intentionally trigger cap exhaustion to freeze the protocol. The fix is to wrap the Aave call in a try/catch and provide a manual rebalancing escape hatch.
+  Map to: reserveData, IPool
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

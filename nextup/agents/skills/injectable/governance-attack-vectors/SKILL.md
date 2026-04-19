@@ -150,6 +150,69 @@ Tag: `[TRACE:delegate(from={A}, to={B}) → checkpoint_update={block} → power_
 - **Token transfer restrictions during voting**: Tokens locked when delegated/voting → cannot transfer and re-vote
 - **Guardian with sunset**: Veto power has an expiration → temporary centralization that decays
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Flash loan bypasses proposal threshold and combines with EarlyExecution voting mode to create and pass a proposal in one block
+  Where it hit: Aragon LockManager / MinVotingPowerCondition
+  Severity: HIGH
+  Source: Solodit (row_id 699)
+  Summary: Users with no real token ownership borrow tokens via flash loan to meet the proposal creation threshold, then vote and execute in the same transaction when EarlyExecution mode is active. The live-balance check in MinVotingPowerCondition does not use a historical snapshot, so borrowed tokens count at vote time. Fix requires either locking the snapshot to a past block or disabling same-block execution.
+  Map to: Governor, proposal, voting_power, voting_delay
+
+- Pattern: Incorrect quorum denominator allows proposals to pass with far fewer votes than intended
+  Where it hit: IQ AI TokenGovernor
+  Severity: HIGH
+  Source: Solodit (row_id 2031)
+  Summary: The quorum fraction is configured as 4 instead of 25, meaning any actor with ~4% of supply can push through a governance proposal. The misconfiguration is a documentation-to-code mismatch that auditors can catch by comparing the quorum() return value against the stated protocol invariant. The impact is full governance takeover for a small token holder.
+  Map to: Governor, quorum, proposal
+
+- Pattern: Total voting power denominator does not decay with individual token weights, making quorum permanently unreachable
+  Where it hit: veRAACToken / RAAC governance
+  Severity: HIGH
+  Source: Solodit (row_id 2388)
+  Summary: getTotalVotingPower() returns total supply rather than the time-decayed aggregate of all veToken balances. Individual voting power decays over time, so the aggregate of actual votes can never reach the non-decaying denominator. Proposals fail to reach quorum indefinitely, and fee rewards become permanently stuck in the FeeCollector.
+  Map to: Governor, quorum, voting_power
+
+- Pattern: Cancellation function accepts an arbitrary storage-slot ID, allowing an attacker to zero out the Timelock minimum delay and reinitialize with zero delay
+  Where it hit: Timelock cancel() function
+  Severity: HIGH
+  Source: Solodit (row_id 2935)
+  Summary: The cancel() function clears a storage slot by the raw ID passed in without first verifying that the ID maps to a real pending operation. An attacker supplies the slot address for the minimum delay field, zeroing it out and then reinitializing the contract. This collapses the mandatory queue-to-execution delay to zero, removing the guardian window entirely.
+  Map to: Timelock, proposal
+
+- Pattern: Voting power snapshot drawn from current timestamp rather than proposal-snapshot block, enabling multi-vote via re-delegation
+  Where it hit: veRWA GaugeController / VotingEscrow
+  Severity: HIGH
+  Source: Solodit (row_id 10644)
+  Summary: vote_for_gauge_weights() fetches voting power at block.timestamp rather than a fixed past snapshot. A user can vote, then delegate to a second address, then vote again from that address in the same window. A Foundry PoC confirms the double-count. Remediation requires fetching voting power from N blocks in the past and pinning it to a scheduled voting window.
+  Map to: Governor, delegate, voting_power, voting_delay
+
+- Pattern: Delegation checkpoint written to the same block writes duplicate veNFT tokenIDs, inflating voting balance
+  Where it hit: Velodrome / Solidly-fork VotingEscrow _moveTokenDelegates
+  Severity: HIGH
+  Source: Solodit (row_id 10915)
+  Summary: _findWhatCheckpointToWrite returns the existing checkpoint index if called more than once within the same block. A second _moveTokenDelegates call in the same block adds a tokenID to the destination list without removing it from the source, creating a duplicate entry. The result is inflated voting power for the destination address and persistent double-counting across all gauge weight votes and governance proposals.
+  Map to: delegate, voting_power, Governor
+
+- Pattern: Proposal guardian/veto role can cancel proposals by signing zero-vote signatures, giving any signer de-facto veto over all signature-based proposals
+  Where it hit: NounsDAO NounsDAOV3Proposals cancel()
+  Severity: HIGH
+  Source: Solodit (row_id 10871)
+  Summary: Any address can cosign a valid proposal with zero contributed votes and then call cancel(), because the cancellation path does not gate on the signer having a non-zero vote share. One zero-weight signer can unilaterally veto every signature-based proposal. Mitigation requires checking that only signers whose votes exceeded zero at snapshot time can trigger cancellation.
+  Map to: Governor, proposal, voting_power, delegate
+
+- Pattern: Proposal cancellation does not validate proposal hash, cancels wrong or non-existent proposal in cross-chain governance
+  Where it hit: ZKsync Token / GovOps Governor (L1 Guardians canceling L2 proposals)
+  Severity: HIGH
+  Source: Solodit (row_id 4009)
+  Summary: The Guardians contract hashes the proposal description differently than the Governor contract, producing a mismatched proposal ID. Cancel calls on L1 target a non-existent proposal on L2, leaving malicious proposals live while the guardian window expires. The fix encodes the description as bytes consistently across both contracts.
+  Map to: Governor, Timelock, proposal
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

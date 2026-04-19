@@ -148,6 +148,83 @@ Tag: `[TRACE:factory_deploy → salt_binds_owner={YES/NO} → pre_deploy_funds={
 - **Paymaster with prepaid deposits**: If paymaster requires pre-deposited balance (not deferred payment) → `postOp` failure doesn't lose funds
 - **Standard factory with owner-bound salt**: `CREATE2` salt includes `keccak256(owner)` → counterfactual address is owner-specific
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: EntryPoint address omitted from CREATE2 salt lets attacker deploy wallet at victim's counterfactual address
+  Where it hit: SmartAccount factory / wallet factory deploy function
+  Severity: HIGH
+  Source: Solodit (row_id 13685)
+  Summary: The entrypoint address was excluded from address generation, so an attacker could deploy the counterfactual wallet using an arbitrary entrypoint while producing the same address. The attacker gains full control of the wallet and can steal pre-existing funds or change the owner. Fix: include the entrypoint in the CREATE2 salt.
+  Map to: EntryPoint, ERC4337
+
+- Pattern: EntryPoint address excluded from userOpHash enables cross-entrypoint replay attacks
+  Where it hit: DeleGatorCore / EIP7702DeleGatorCore hash computation
+  Severity: HIGH
+  Source: Solodit (row_id 2035)
+  Summary: The userOpHash did not include the EntryPoint address, so a valid signed operation could be replayed against a different EntryPoint contract. A proof of concept was provided showing successful cross-entrypoint replay. Fix: include the EntryPoint address in the hashing logic inside validateUserOp.
+  Map to: UserOperation, validateUserOp, EntryPoint, ERC4337
+
+- Pattern: Paymaster signature replayable across multiple UserOperations drains paymaster deposits
+  Where it hit: VerifyingSingletonPaymaster.sol / validatePaymasterUserOp
+  Severity: HIGH
+  Source: Solodit (row_id 13683)
+  Summary: The paymaster's off-chain signature was not invalidated after first use, allowing an attacker to replay it across multiple operations and drain the paymaster's deposited balance. A proof of concept using a MaliciousAccount was provided and verified. Fix: track used hashes with a boolean mapping inside validatePaymasterUserOp.
+  Map to: Paymaster, validateUserOp, ERC4337
+
+- Pattern: Paymaster does not account for gas cost of current transaction, users can withdraw before paying
+  Where it hit: Paymaster / GasTank balance accounting
+  Severity: HIGH
+  Source: Solodit (row_id 405)
+  Summary: The paymaster did not lock or account for gas owed by an in-flight user transaction, letting users withdraw their GasTank balance immediately after submitting an operation and before gas was settled. Users could consume gas without paying for it. Fix: block withdrawals for accounts with unpaid in-flight transactions.
+  Map to: Paymaster, postOp, ERC4337
+
+- Pattern: Zero-padded paymasterAndData field bypasses module guard checks
+  Where it hit: NativeTokenLimitModule / PaymasterGuardModule
+  Severity: HIGH
+  Source: Solodit (row_id 2557)
+  Summary: Passing a 52-byte all-zero paymasterAndData field caused the decoded paymaster address to be zero, and the modules' conditions failed to reject it because they lacked a non-zero address check. An attacker could submit such a UserOperation to bypass the paymaster guard and drain the account. Fix: add an explicit non-zero check on the decoded paymaster address in each module's if-condition.
+  Map to: Paymaster, UserOperation, validateUserOp, ERC4337
+
+- Pattern: Non-allowlisted paymaster passes validation phase and drains account's pre-approved balance
+  Where it hit: Smart Wallet Permissions / permission contracts
+  Severity: HIGH
+  Source: Solodit (row_id 4328)
+  Summary: The allowlist check for paymasters was performed during execution rather than during the validation phase, so a non-allowlisted paymaster could pass validatePaymasterUserOp and consume the account's pre-approved balance before the check ran and failed. Fix: move the paymaster allowlist check into the validation phase.
+  Map to: Paymaster, validateUserOp, ERC4337
+
+- Pattern: chainId missing from UserOperation hash enables cross-chain signature replay
+  Where it hit: SmartAccount / UserOperation hash computation
+  Severity: MEDIUM
+  Source: Solodit (row_id 13678)
+  Summary: The chainId was not included in the UserOperation hash, so a signed operation valid on one chain could be replayed on any other chain where the same smart contract account exists and the same verifyingSigner is configured. Fix: include the chainId in the UserOperation hash calculation.
+  Map to: UserOperation, validateUserOp, ERC4337
+
+- Pattern: 2D nonce batchId #0 shared between EntryPoint path and direct execTransaction causes collision
+  Where it hit: SmartAccount.sol / execTransaction and validateUserOp
+  Severity: MEDIUM
+  Source: Solodit (row_id 13673)
+  Summary: The protocol locked batchId #0 for EntryPoint use, but execTransaction imposed no such restriction. A direct call to execTransaction using batchId 0 would increment the same nonce counter, causing concurrent UserOperations routed through the EntryPoint to fail unexpectedly. Fix: require batchId != 0 inside execTransaction.
+  Map to: UserOperation, validateUserOp, EntryPoint, ERC4337
+
+- Pattern: ERC4337Factory salt does not bind owner address, enabling frontrun to steal funds
+  Where it hit: ERC4337Factory.createAccount
+  Severity: MEDIUM
+  Source: Solodit (row_id 2928)
+  Summary: When a salt smaller than 2^96 was provided, the factory did not validate that the owner address was encoded in the salt. An attacker could frontrun account creation with a different owner, deploying at the same deterministic address and gaining control of any funds already sent to that counterfactual address. Fix: strictly require the owner address in the first 160 bits of all salts.
+  Map to: ERC4337, EntryPoint
+
+- Pattern: postOp fee bypass via intentional revert allows user to execute operations without paying paymaster
+  Where it hit: VersaVerifyingPaymaster / _postOp
+  Severity: MEDIUM
+  Source: Solodit (row_id 10318)
+  Summary: When _postOp failed, the EntryPoint called it again in postOpReverted mode, but this second call also failed to charge the user. A user could intentionally trigger the revert path to complete execution while avoiding the gas fee, effectively draining the paymaster. Fix: enforce fee collection in all three postOp modes, including the postOpReverted path.
+  Map to: Paymaster, postOp, ERC4337
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

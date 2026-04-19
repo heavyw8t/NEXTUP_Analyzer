@@ -199,6 +199,69 @@ Tag: `[TRACE:vault_share_conversion={correct/skips_offset} → supply_queue_awar
 - **Using MorphoBalancesLib consistently**: If the protocol uses the official `MorphoBalancesLib` for all share↔asset conversions, rounding and virtual offset issues are handled correctly
 - **Single-transaction interactions**: If the protocol's Morpho interactions are atomic (supply → read → withdraw in one tx), interest accrual staleness between transactions doesn't apply
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Wrong token approved vs token supplied — `_asset` and `loanToken` diverge, strategy approves one token but supplies the other, making the strategy non-functional
+  Where it hit: StrategySupplyMorpho contract supplying to a MorphoBlue market
+  Severity: MEDIUM
+  Source: Solodit (row_id 2229)
+  Summary: The deployer sets `_asset` independently of `loanToken` in `MarketParams`. Because approval uses `_asset` but `morpho.supply()` pulls `loanToken`, any mismatch causes the strategy to fail silently or revert. The fix is to validate or derive `_asset` from `MarketParams.loanToken` at construction time.
+  Map to: IMorphoBlue, MarketParams, supply
+
+- Pattern: Market creation front-run / parameter mismatch — attacker front-runs `createMarket` with identical-looking but subtly different `MarketParams`, redirecting protocol deposits to an unintended market
+  Where it hit: Protocol calling `morpho.createMarket` without checking whether the market ID already exists
+  Severity: MEDIUM
+  Source: Solodit (row_id 208)
+  Summary: Morpho Blue derives the market ID as `keccak256(abi.encode(MarketParams))`. Without a pre-existence check, an attacker can deploy a market with the same tokens but a different oracle or IRM before the protocol does. The protocol then interacts with a market it did not configure. The fix is to verify that the target market does not already exist before calling `createMarket`.
+  Map to: IMorpho, createMarket, MarketParams
+
+- Pattern: Position opened at LLTV boundary — borrow immediately at the liquidation threshold, leaving zero health margin
+  Where it hit: Protocol-controlled borrow position initialised at exactly LLTV
+  Severity: MEDIUM
+  Source: Solodit (row_id 209)
+  Summary: After deployment the protocol opens a borrow position whose LTV equals the market LLTV, leaving no buffer before liquidation. Any minor price move triggers external liquidation. The protocol should target a substantially lower LTV (e.g. 70% of LLTV) and enforce it at position creation.
+  Map to: IMorphoBlue, MarketParams, borrow, liquidate
+
+- Pattern: Share rounding inversion — protocol converts `borrowShares` to assets using `mulDivDown` instead of `mulDivUp`, underestimating debt; rounding discrepancy breaks health-factor calculation and migration
+  Where it hit: `MorphoLendingRouter::healthFactor` diverging from Morpho's internal rounding
+  Severity: MEDIUM
+  Source: Solodit (row_id 969)
+  Summary: Morpho rounds borrow-share-to-asset conversions *up* to protect the protocol, but the external health-factor function rounded *down*, making the computed borrow amount smaller than actual. This caused migration transfers to be insufficient, reverting the migration. Rounding direction must match Morpho's `SharesMathLib` exactly.
+  Map to: IMorphoBlue, borrow, MarketParams
+
+- Pattern: Virtual shares earn interest — the virtual offset shares (VIRTUAL_SHARES / VIRTUAL_ASSETS) accrue interest like real shares, creating un-repayable bad debt that silently erodes supplier balances
+  Where it hit: `_accrueInterest` in Morpho.sol applying interest to the full `totalBorrowShares` including the virtual offset
+  Severity: MEDIUM
+  Source: Solodit (row_id 9409)
+  Summary: Because `totalBorrowShares` includes `VIRTUAL_SHARES`, interest accrues on shares that are not owned by any borrower and can never be repaid. Over time this inflates `totalBorrowAssets` relative to `totalSupplyAssets`, turning the virtual-offset protection into a source of slow bad debt that is socialized across all suppliers.
+  Map to: IMorphoBlue, supply, borrow
+
+- Pattern: IRM invoked when market has insufficient assets — stateful IRM rate-at-target is adjusted even when no actual borrowing occurred, permanently biasing the rate upward and creating unclearable debt
+  Where it hit: `Morpho.sol` calling `irm.borrowRate()` before checking that `totalBorrowAssets > 0`
+  Severity: MEDIUM
+  Source: Solodit (row_id 9405)
+  Summary: The AdaptiveCurveIRM stores `rateAtTarget` as state. When `accrueInterest` is triggered on an essentially-empty market (zero or near-zero borrows), the IRM still updates `rateAtTarget` upward, resulting in an artificially high rate on the next real borrow. The fix is to skip IRM invocation when the market has no outstanding borrow.
+  Map to: IMorpho, MarketParams
+
+- Pattern: Fixed liquidation incentive + LLTV exploited to manufacture bad debt — attacker creates a market, supplies then borrows at LLTV, waits for a small price drop, and liquidates at the fixed LIF to pocket a spread exceeding the collateral shortfall
+  Where it hit: `Morpho.sol` liquidation path with permissionless market creation and no LLTV guard
+  Severity: MEDIUM
+  Source: Solodit (row_id 9406)
+  Summary: The liquidation incentive factor (LIF) is computed from the market LLTV and a governance cursor. An attacker can choose a high-LLTV market to maximize LIF, then orchestrate a liquidation where collateral value minus seized amount is negative, generating bad debt socialized to other suppliers. Protocols entering externally-created markets without validating LLTV bounds are directly exposed.
+  Map to: IMorphoBlue, MarketParams, liquidate, supply
+
+- Pattern: Tiny liquidations accumulate rounding-based bad debt — splitting a single unhealthy position into many micro-liquidations exploits per-iteration rounding so the borrower's collateral is reduced faster than their debt, leaving large residual bad debt
+  Where it hit: `Morpho.sol` liquidation loop where seized collateral is rounded up from repaid shares
+  Severity: MEDIUM
+  Source: Solodit (row_id 9408)
+  Summary: Morpho computes seized collateral from repaid borrow shares using `mulDivUp`, while the share reduction uses `mulDivDown`. Each micro-liquidation removes more collateral than debt. Aggregated over many tiny calls the borrower's entire collateral is seized while significant borrow shares remain, creating near-total bad debt socialized to suppliers. A protocol relying on Morpho Blue's liquidation mechanism must account for this rounding asymmetry when modelling worst-case bad debt.
+  Map to: IMorphoBlue, liquidate, borrow
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

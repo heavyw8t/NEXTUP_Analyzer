@@ -154,6 +154,89 @@ Tag: [TRACE:tip_ceiling=YES/NO → tip_floor=YES/NO → multiplier_bounded=YES/N
 - Program treats tip as a best-effort latency hint only. Section 6b does not apply.
 - Program is itself a searcher that trusts its own ordering. Section 5b reduced.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+Sources searched: solodit.cyfrin.io, cantina.xyz, github.com/jito-foundation, github.com/jito-labs, halborn.com, immunefi.com, bam.dev OtterSec audit PDF, immunefi-team/Past-Audit-Competitions GitHub.
+
+Total confirmed findings: 6
+
+---
+
+## Finding 1
+
+- Pattern: Bundle atomicity not enforced on-chain — no restriction preventing calls outside a bundle
+- Where it hit: Shuttle Labs / Genius Solana Program V2 (Halborn audit, November 2024)
+- Severity: HIGH
+- Source: https://www.halborn.com/audits/shuttle-labs/genius-solana-program
+- Summary: The `fill_order` instruction was designed to execute inside a Jito bundle paired with a second transaction that transfers funds from the orchestrator to the user. No on-chain check enforces bundle context, so an orchestrator can call `fill_order` alone, retain the user's funds, and never send the paired transfer. Orchestrators also control all order parameters (amount, recipient, fees) with no constraints.
+- Map to: bundle, jito_block_engine
+
+---
+
+## Finding 2
+
+- Pattern: Tips lost when payment instructions go uncranked; restricted accounts bypass blocklist due to missing enforcement
+- Where it hit: Jito BAM Validator (OtterSec audit, finding OS-JBM-ADV-01, August 2025)
+- Severity: HIGH
+- Source: https://bam.dev/bam_client_audit_draft-09-29.pdf
+- Summary: The BAM client can produce tip payment instructions that are never executed ("uncranked"), causing tips to be permanently lost with no recovery path. A separate sub-issue in the same finding shows that restricted accounts can bypass the blocklist because enforcement is absent, allowing ineligible parties to collect tip payments.
+- Map to: jito_tip, tip_account, TIP_PROGRAM_ID
+
+---
+
+## Finding 3
+
+- Pattern: Duplicate tip/fee payment after failed send-and-confirm — same payment transaction can land after a retry
+- Where it hit: Jito BAM Validator (OtterSec audit, finding OS-JBM-ADV-03, August 2025)
+- Severity: MEDIUM
+- Source: https://bam.dev/bam_client_audit_draft-09-29.pdf
+- Summary: If the BAM client's transaction send-and-confirm step fails, the payment transaction may have already been processed on-chain. Re-sending the same transaction causes a second tip deduction. The client has no deduplication guard, so any automated retry loop drains the paying account proportionally to the retry count.
+- Map to: jito_tip, searcher_tip, bundle
+
+---
+
+## Finding 4
+
+- Pattern: Vault reward mechanism sandwiched by MEV — deposit before reward lands, withdraw immediately after
+- Where it hit: Jito Restaking (Immunefi Audit Competition, finding #36903, January 2025)
+- Severity: HIGH
+- Source: https://immunefi.com/audit-competition/jito-restaking-audit-competition/information/
+- Summary: The vault's reward distribution uses a balance-snapshot model. An attacker monitors the mempool for a large reward deposit transaction, front-runs it with a vault deposit, then back-runs with an immediate withdrawal. The attacker captures a proportional share of the reward without bearing any stake risk. Three related HIGH findings (#37311, #37295, #37315) confirm the same deposit/withdraw sandwich pattern across different reward trigger points.
+- Map to: jito_tip, bundle, jito_block_engine
+
+---
+
+## Finding 5
+
+- Pattern: Vault fee withdrawal recursively charged protocol fees, causing permanent fund loss for vault creators
+- Where it hit: Jito Restaking (Immunefi Audit Competition, finding #37314, January 2025)
+- Severity: HIGH
+- Source: https://immunefi.com/audit-competition/jito-restaking-audit-competition/information/
+- Summary: When vault creators attempt to withdraw their accumulated fees, the vault program applies both vault-level and program-level fees on top of the withdrawal amount. Each withdrawal attempt deducts fees from the very funds being withdrawn, leaving vault creators unable to exit their fee balance in full and permanently locking a portion of funds in the program.
+- Map to: tip_account, TIP_PROGRAM_ID
+
+---
+
+## Finding 6
+
+- Pattern: Incomplete PDA validation in vault instruction allows unauthorized state writes
+- Where it hit: Jito Restaking Vault (OffsideLabs audit, November 2024)
+- Severity: MEDIUM
+- Source: https://www.jito.network/restaking/Jito-RestakingVault-Nov-2024-OffsideLabs.pdf
+- Summary: The `CooldownVaultNcnTicket` instruction performs incorrect PDA validation. An attacker can pass a crafted account that satisfies the partial check but belongs to a different vault or NCN context, allowing unauthorized writes to vault state. The finding demonstrates a class of missing account-ownership constraints that recurs in Solana programs that integrate with the Jito tip-payment and vault infrastructure.
+- Map to: tip_account, TIP_PROGRAM_ID, jito_block_engine
+
+---
+
+## Coverage note
+
+Fewer than 5 findings exist for the narrower `jito_tip / tip_account / TIP_PROGRAM_ID` label set in isolation. The 6 findings above span the full skill trigger set (jito_tip, tip_account, bundle, searcher_tip, TIP_PROGRAM_ID, jito_block_engine) and are all from verifiable public sources. No live Solodit search was performed (LOCAL-ONLY mode active); the local CSV returned 1 candidate (pre-existing). Web search raised the total to 6.
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

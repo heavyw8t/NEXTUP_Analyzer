@@ -165,6 +165,41 @@ Tag: [TRACE:ema_vs_agg_consistent=YES/NO → ema_staleness_checked=YES/NO → ch
 - Program reads only `ema_price` and treats it as authoritative by design, with documented max age. EMA staleness is still in scope.
 - Program uses Pyth pull model with explicit `PostedPriceUpdate` verification. Raw account layout bugs (1b, 1c) are handled by the pull SDK.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Oracle price consumed directly in swap math with no staleness gate, enabling transaction reordering to capture price movement
+  Where it hit: Token swap program that prices swaps using Pyth; attacker reorders transactions around oracle update to buy at pre-update price and sell at post-update price
+  Severity: HIGH
+  Source: Solodit (row_id 14825)
+  Summary: A swap program reads the Pyth price feed without a staleness check or minimum fee floor, so an attacker who observes a pending oracle update can front-run it, execute a swap at the stale price, and reverse at the fresh price for risk-free profit. The fix applied a custom step price curve and protocol fee to eliminate the arbitrage margin. Maps directly to the absence of `get_price_no_older_than` in the hot swap path.
+  Map to: get_price_unchecked, PriceAccount, pyth_sdk_solana
+
+- Pattern: Missing slippage protection when Pyth price determines token cost dynamically, exposing buyers to price volatility between submission and execution
+  Where it hit: Token early-purchase program where the SOL cost per token is derived from a Pyth feed at execution time; user cannot specify a maximum acceptable price
+  Severity: MEDIUM
+  Source: Solodit (row_id 1298)
+  Summary: The purchase instruction reads the current Pyth price to compute how much SOL a buyer must pay but provides no `max_sol_amount` parameter. Between transaction submission and on-chain execution, a price spike causes the buyer to pay significantly more SOL than expected. The fix adds a caller-supplied upper bound that the instruction enforces before debiting. This maps to the pattern of consuming `PythPriceFeed` price without a caller-side bound check.
+  Map to: PythPriceFeed, get_price_no_older_than, pyth_sdk_solana
+
+- Pattern: Confidence interval not used to filter out-of-range exchange rate deltas, allowing negative or anomalous Pyth prices to update the index
+  Where it hit: A lending or yield protocol's `Utils::get_index` function that applies Pyth price deltas to an on-chain index; negative changes above the confidence band are accepted
+  Severity: MEDIUM
+  Source: Solodit (row_id 2519)
+  Summary: The code retrieves the latest Pyth price and computes a rate change, but the comparison logic permits negative deltas beyond what the confidence interval would allow, instead of discarding them. An attacker or degraded feed can push the index downward in ways the protocol did not intend. The fix gates the delta on the confidence interval before applying it. Maps to Section 2a/2b: `conf` field ignored when validating directional price moves.
+  Map to: PriceAccount, pyth_sdk_solana, SolanaPriceAccount
+
+- Pattern: `get_price_internal` accepts price feed output without checking confidence interval or exponent validity, allowing untrusted prices into protocol math
+  Where it hit: Pyth Oracle management contract's internal price getter; missing validation of `conf` ratio and `expo` range before the price is used downstream
+  Severity: MEDIUM
+  Source: Solodit (row_id 4443)
+  Summary: The function calls into the Pyth SDK and extracts the price value but skips the confidence and exponent checks documented in the official Pyth integration guide. A feed with an unusually wide confidence interval or an unexpected exponent value passes straight into collateral or liquidation math. The fix adds explicit range checks for both fields. Maps to Section 2a (confidence band) and Section 3a/3b (exponent sign and overflow handling).
+  Map to: get_price_unchecked, PriceAccount, pyth_sdk_solana, get_price_no_older_than
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

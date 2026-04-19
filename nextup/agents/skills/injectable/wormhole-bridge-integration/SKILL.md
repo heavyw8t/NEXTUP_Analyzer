@@ -154,6 +154,87 @@ Tag: [TRACE:wrapped_mint_derivation=canonical/broken → self_vs_foreign_branch_
 - Program uses a dedicated relayer SDK that verifies VAAs on its behalf with pinned versions.
 - Program handles only one specific token with a single emitter and pinned mint. Section 3b reduced.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+Sources searched: Solodit, Halborn, Kudelski, Ackee Blockchain, Code4rena, GitHub wormhole-foundation, marcohextor, immunefi, sec3.dev, Pyth DAO forum.
+
+---
+
+## Finding 1
+
+- Pattern: `verify_signatures` reads from a fake account instead of the real `sysvar::instructions` because `load_instruction_at` (deprecated) does not validate the account owner, allowing an attacker to substitute a crafted account that mimics successful Secp256k1 output.
+- Where it hit: Wormhole Solana core bridge, `verify_signatures` instruction, February 2022 mainnet exploit.
+- Severity: CRITICAL
+- Source: https://ackee.xyz/blog/2022-solana-hacks-explained-wormhole/ | https://research.kudelskisecurity.com/2022/02/03/quick-analysis-of-the-wormhole-attack/ | https://www.halborn.com/blog/post/explained-the-wormhole-hack-february-2022
+- Summary: The Wormhole Solana contract used `load_instruction_at` (deprecated) to verify that a Secp256k1 instruction preceded `verify_signatures`. The function does not assert that the source account is the canonical `Sysvar1nstructions` sysvar, so the attacker passed a crafted account containing fabricated instruction data showing verified signatures. No guardian signatures were actually checked; the VAA was marked valid and 120,000 wETH ($326M) were minted. The fix replaced the call with `load_instruction_at_checked`, which validates the sysvar account key. This is the canonical Solana account-ownership-check failure applied to the guardian quorum verification path.
+- Map to: `wormhole_core_bridge`, `guardian_set`, `parse_and_verify_vaa`, `VAA`
+
+---
+
+## Finding 2
+
+- Pattern: Guardian set expiration check uses `expiration_time == 0` as the sentinel for "never expires", but the first two guardian sets both used the same key and were never given a non-zero expiration time, allowing that single genesis key to pass any VAA instead of requiring the full 13-of-19 quorum.
+- Where it hit: Wormchain (Wormhole's Cosmos chain), guardian set state logic; Wormhole team confirmed a parallel variant was also present on Solana and patched separately via a hardcoded exception for the initial guardian set.
+- Severity: CRITICAL
+- Source: https://marcohextor.com/wormhole-one-key-vulnerability/
+- Summary: The VAA verification loop checks expiration as `if 0 < guardianSet.ExpirationTime && guardianSet.ExpirationTime < blockTime`. Because the genesis guardian set carries `ExpirationTime == 0` it is permanently treated as valid. The first two guardian sets shared one key, so one specific private key could satisfy any quorum check on its own. The Wormhole team confirmed that Solana received a parallel fix (hardcoded rejection of the initial set) before this was reported on Wormchain. Bug bounty paid $50,000 USDC, January 2024.
+- Map to: `guardian_set`, `wormhole_core_bridge`, `VAA`, `parse_and_verify_vaa`
+
+---
+
+## Finding 3
+
+- Pattern: A protocol that queues governance proposals via Wormhole VAAs and re-verifies them at execution time is broken when the guardian set rotates between queue and execute: the second `parseAndVerifyVM` call fails because the signature set in the stored VAA references the old guardian set index, which may now be expired.
+- Where it hit: Moonwell `TemporalGovernor` contract, Code4rena audit July 2023 (issue #325).
+- Severity: MEDIUM
+- Source: https://github.com/code-423n4/2023-07-moonwell-findings/issues/325 | https://code4rena.com/reports/2023-07-moonwell
+- Summary: `TemporalGovernor.executeProposal` re-runs `parseAndVerifyVM` on the raw VAA bytes stored at queue time. If Wormhole rotates its guardian set during the mandatory `proposalDelay` window, the stored VAA's signatures reference the now-expired set and the second verification reverts. The proposal can never execute, forcing a full re-submission from the source chain timelock and another delay cycle. Fix: store only the decoded, already-verified payload hash at queue time and skip re-verification at execution, or replace the raw VAA with a guardian-set-agnostic commitment.
+- Map to: `guardian_set`, `VAA`, `parse_and_verify_vaa`, `wormhole_core_bridge`
+
+---
+
+## Finding 4
+
+- Pattern: Token bridge transfer VAA specifies a recipient address on Solana that is the user's wallet pubkey (or an incorrect ATA), not the actual Associated Token Account for the mint. The Solana token bridge program requires the recipient to be a valid ATA for `(receiver, mint)`; any mismatch causes the redemption instruction to fail permanently and the tokens are locked with no refund path.
+- Where it hit: Wormhole Solana token bridge, reported as a design-level issue in GitHub issue #3992 by the Wormhole team itself after user reports of locked funds.
+- Severity: HIGH (funds permanently locked, no recovery before the fix)
+- Source: https://github.com/wormhole-foundation/wormhole/issues/3992
+- Summary: Users bridging tokens from EVM chains to Solana frequently supplied their Solana wallet address as the recipient rather than the ATA for `(wallet, mint)`. The token bridge's `complete_transfer` family of instructions validates the recipient account against the PDA-derived mint and rejects non-ATA recipients with no fallback. Tokens were permanently irrecoverable until Wormhole shipped a new instruction allowing the wallet owner to submit the original VAA for corrective redemption or cross-chain refund. The underlying risk pattern is: recipient canonicalization on Solana is stricter than on EVM; any program consuming Wormhole transfer VAAs must derive and enforce the ATA before accepting the recipient field.
+- Map to: `token_bridge`, `VAA`, `wormhole_core_bridge`
+
+---
+
+## Finding 5
+
+- Pattern: Wormhole's Solana core contract had a guardian set expiration bug (`OldGuardianSet` error) where the second guardian set upgrade caused VAAs signed by the transitional set to be rejected because the expiration timestamp was set incorrectly during the rotation governance instruction.
+- Where it hit: Wormhole Solana core bridge, guardian set upgrade path, GitHub issue #110.
+- Severity: HIGH (all VAAs from the transitional guardian set became unverifiable, breaking the bridge)
+- Source: https://github.com/wormhole-foundation/wormhole/issues/110 | https://gitea.interbiznw.com/certusone/wormhole-entropybitcom/commit/82fd4293e2a869b1b83e1f8cfac808eec0276e8b
+- Summary: After the second guardian set rotation on Solana mainnet, VAA verification returned `OldGuardianSet` for messages signed by the new set. Root cause: the governance upgrade instruction wrote the expiration time of the old set using an off-by-one in the clock value, causing the newly-active set to appear expired immediately. The fix (commit `82fd429`) corrected the expiration timestamp assignment logic in the guardian set rotation handler. This demonstrates that the guardian set index freshness check is fragile: both the acceptance logic (finding 2) and the rotation logic (this finding) must be correct or the entire bridge halts.
+- Map to: `guardian_set`, `wormhole_core_bridge`, `VAA`, `parse_and_verify_vaa`
+
+---
+
+## Finding 6
+
+- Pattern: Settlement instructions in a Wormhole CCTP-based fast-finality bridge assume `order_amount` from the `fastVAA` payload equals the token balance in the `prepared_custody_token` account. If fees or rounding create a discrepancy, the account-close instruction fails because it requires a zero balance, and the custody account cannot be reclaimed.
+- Where it hit: Wormhole CCTP fast-finality auction settlement on Solana (local CSV, row 6364).
+- Severity: HIGH
+- Source: Local CSV (solodit_findings.dedup.csv row 6364); patch commit 307cc28 in wormhole-foundation repository.
+- Summary: The settlement path reads `order_amount` directly from the decoded fastVAA payload and uses it as the transfer amount. If the actual token balance in `prepared_custody_token` differs (due to dust, rounding, or fee deductions), the transfer leaves a non-zero balance and the subsequent `close_account` CPI reverts. Fix: use the live token balance from the `prepared_custody_token` account rather than the VAA-derived amount, ensuring exact accounting before account closure.
+- Map to: `VAA`, `token_bridge`, `wormhole_core_bridge`
+
+---
+
+## Coverage note
+
+Six findings documented (1 from local CSV, 5 from web research). All are Solana-side consumer bugs or Wormhole core contract bugs affecting Solana. No live Solodit API was queried. Sources include post-mortem analyses, GitHub issues in the wormhole-foundation repository, a Code4rena audit report, and an independent bug bounty disclosure. The Cantina and OtterSec Solana-specific audit PDFs in wormhole-foundation/wormhole-audits were not directly accessible via search; those may contain additional emitter-address and payload-type findings not captured here.
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

@@ -282,6 +282,69 @@ Tag: `[TRACE:external_protocols={list} → reward_tokens={list} → claimed={YES
 - **Lock-up gaming with minimum deposit enforced**: If the vault requires minimum deposit > dust threshold, 1-wei seeding is blocked.
 - **Bad debt front-running with withdrawal delay ≥ 24h**: Delay makes front-running impractical for most observable loss events.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: First depositor / share inflation via direct donation (no offset)
+  Where it hit: StakedUSH vault (row 721), LendingVault (row 6800), GMVault (row 5627), Burve NoopVault (row 1653)
+  Severity: HIGH
+  Source: Solodit (row_index 721)
+  Summary: When USH tokens are sent directly to the StakedUSH vault contract, `totalAssets` is inflated without a corresponding increase in `totalShares`. A first depositor sends 1 wei to obtain 1 share, then donates a large amount, causing subsequent depositors to receive 0 shares due to floor division. No virtual-share offset or zero-share guard was present. The team confirmed and fixed the bug.
+  Map to: ERC4626, first_depositor, share_inflation, totalAssets, totalShares
+
+- Pattern: Share inflation via dead-shares minted to `msg.sender` instead of the zero address
+  Where it hit: AutoCompoundingPodLp (row 2594)
+  Severity: HIGH
+  Source: Solodit (row_index 2594)
+  Summary: The vault minted "dead shares" to `msg.sender` on first deposit rather than to address(0). This means the attacker retains ownership of those shares and can redeem them after inflating `totalAssets` via a front-run donation. The attacker deposits a tiny amount, inflates the price, then withdraws all assets including the victim's deposit. Fix: mint dead shares to address(0) so they are permanently locked.
+  Map to: ERC4626, first_depositor, share_inflation, totalAssets, totalShares
+
+- Pattern: Yield front-running (sandwich attack on `totalAssets` update)
+  Where it hit: MultipliVault `onUnderlyingBalanceUpdate` (row 1056), CurvedVault `totalAssets` stale liquidityIndex (row 4587)
+  Severity: HIGH
+  Source: Solodit (row_index 1056)
+  Summary: When an external keeper updates the vault's underlying balance (increasing `totalAssets`), an attacker observes the pending transaction, deposits a large amount beforehand, and withdraws immediately after. The attacker captures yield they did not earn, diluting returns for long-term depositors. The root cause is that share price is determined by `totalAssets` at the moment of deposit/withdrawal with no minimum holding period. Fix: require a minimum deposit lock-up or use a time-weighted share price.
+  Map to: ERC4626, totalAssets, totalShares, share_inflation
+
+- Pattern: Bad debt front-running (withdrawal before loss socialization, no delay)
+  Where it hit: FraxPair lending vault (row 15142), LendingVault vault (row 11607)
+  Severity: HIGH
+  Source: Solodit (row_index 15142)
+  Summary: When a borrower accrues bad debt and the liquidation leaves residual shortfall, the vault's `totalAssets` remains overstated until the shortfall is explicitly written down. Depositors who observe the impending loss event (e.g., oracle price movement, pending liquidation in the mempool) can front-run with `withdraw()`, exiting at the pre-loss share price. Remaining depositors absorb the full loss. No withdrawal delay existed to prevent this. Fix: implement a withdrawal request queue with a delay, or mark bad debt immediately at the point of liquidation.
+  Map to: ERC4626, totalAssets, withdrawal_queue
+
+- Pattern: Withdrawal griefing via deposit-on-behalf (resets `idToBlockOfLastDeposit`)
+  Where it hit: LendingAssetVault MetaVault (row 2648), VaultManagerV2 (row 7348)
+  Severity: HIGH
+  Source: Solodit (row_index 2648)
+  Summary: A vault enforces a same-block withdrawal lock by recording `idToBlockOfLastDeposit` on every deposit. The `deposit(amount, receiver)` function accepts an arbitrary `receiver`, so an attacker can deposit 1 wei on behalf of any victim to reset their withdrawal lock to the current block, permanently blocking the victim from withdrawing in the same transaction. The attacker repeats this on every block to freeze the victim's assets indefinitely. Fix: restrict `deposit` so that only the `receiver` themselves can trigger a new deposit on their account.
+  Map to: ERC4626, withdrawal_queue, first_depositor
+
+- Pattern: Rounding direction wrong — `withdraw` rounds down shares burned (user favored)
+  Where it hit: FundContract (row 1519), TurboSafe ERC4626 mint bug (row 16483)
+  Severity: HIGH
+  Source: Solodit (row_index 1519)
+  Summary: The `withdraw()` function used Solidity floor division when computing shares to burn, instead of ceiling division. This meant users received slightly more assets than their shares were worth on each withdrawal, creating a slow drain from the vault. With enough withdrawals or a low-decimal asset, the vault's tracked `totalAssets` diverges from its real balance, eventually making the last redeemer unable to exit. ERC4626 spec requires that `withdraw` rounds up shares burned (in favor of the vault). Fix: use `Math.mulDiv(..., Math.Rounding.Up)` when computing shares to burn.
+  Map to: ERC4626, totalAssets, totalShares, vault_accounting
+
+- Pattern: Reward windfall for first depositor after zero-depositor period
+  Where it hit: Fair Funding vault `amount_claimable_per_share` (row 13143), RedVeil Popcorn `highWaterMark` (row 13373)
+  Severity: HIGH
+  Source: Solodit (row_index 13143)
+  Summary: The Fair Funding vault accumulates `amount_claimable_per_share` over time. When a new depositor arrives, their position is immediately eligible to claim all previously accrued WETH (the counter since contract creation), not just rewards earned after their entry. Because the vault over-commits payouts, it becomes insolvent: the first few claimants drain the contract while later depositors find nothing to claim. Fix: initialize `position.amountClaimed` to the current `amount_claimable_per_share` snapshot at deposit time so new depositors only accrue future rewards.
+  Map to: ERC4626, totalShares, totalAssets
+
+- Pattern: Fee accounting corruption — deposit fee not reflected in `totalAssets` before share mint
+  Where it hit: GovernanceHYBR.sol (row 177)
+  Severity: HIGH
+  Source: Solodit (row_index 177)
+  Summary: In `GovernanceHYBR.deposit`, the contract first deposits HYBR tokens into `votingEscrow`, which causes `totalAssets()` to increase before shares are minted. The share calculation uses the *post-deposit* `totalAssets`, which already includes the tokens just provided by the depositor. This results in the depositor receiving fewer shares than they are entitled to. The standard pattern requires capturing the share price *before* the asset transfer and computing shares on the pre-transfer ratio. Fix: snapshot `totalAssets` prior to the deposit call and use that value for the share calculation.
+  Map to: ERC4626, totalAssets, totalShares, vault_accounting
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

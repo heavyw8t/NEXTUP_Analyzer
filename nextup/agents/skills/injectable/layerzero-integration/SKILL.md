@@ -193,6 +193,76 @@ Tag: `[TRACE:compose_used={YES/NO} → compose_replay_safe={YES/NO} → rate_lim
 - **Read-only cross-chain queries**: If the protocol only reads cross-chain state (via LZ Read or similar) without executing state changes, receive-side vulnerabilities don't apply
 - **Admin-controlled peer with timelock**: If setPeer is behind a timelock + multi-sig, peer manipulation attacks require governance compromise (centralization risk, not integration bug)
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: User-controlled gas parameter allows near-zero gas forwarded to lzReceive, burning tokens with no execution on destination
+  Where it hit: BridgeLR / BridgeMB / Bridge send() and quote() — `_receiverGas` accepted with only `> 0` check
+  Severity: HIGH
+  Source: Solodit (row_id 3705)
+  Summary: The `send` function accepts a user-supplied `_receiverGas` parameter with only a `> 0` check. An attacker passes `_receiverGas = 1`, the relayer delivers with that gas, `lzReceive` runs out of gas before completing, and the source-chain tokens are already burned. No minimum gas floor was enforced via `setMinDstGas` (V1) or `enforcedOptions` (V2). Funds are permanently lost with no retry path.
+  Map to: lzReceive, _lzSend, MessagingFee
+
+- Pattern: No minimum gas enforced on adapterParams; attacker sends with ~50k gas, lzReceive reverts before NonblockingLzApp try/catch, StoredPayload blocks channel permanently
+  Where it hit: Tapioca — BaseTOFT / BaseUSDO / BaseTapOFT inheriting NonBlockingLzApp; function triggerSendFrom with airdropAdapterParams
+  Severity: HIGH
+  Source: Solodit (row_id 11053)
+  Summary: All contracts inheriting NonBlockingLzApp allow callers to embed arbitrary gas values in adapter params. An attacker calls any send function with gas ~50k; the relayer delivers exactly that amount; `lzReceive` consumes all gas before the try/catch can write the failure to `failedMessages`, so LayerZero stores a `StoredPayload` instead. The channel between the two chains is permanently blocked. No `setMinDstGas` check was present for any packet type.
+  Map to: lzReceive, OApp
+
+- Pattern: Blocking lzReceive with no non-blocking fallback; any caller can craft a reverting message to permanently halt the channel
+  Where it hit: Velodrome — RedemptionReceiver, which inherits directly from LzApp without implementing the non-blocking pattern
+  Severity: HIGH
+  Source: Solodit (row_id 15779)
+  Summary: RedemptionReceiver overrides `lzReceive` directly without wrapping execution in a try/catch that stores failures. Any caller can send a message they know will revert (e.g. a redemption that exceeds eligible amount), blocking the FTM-to-Optimism channel. Because there is no `failedMessages` map and no `forceResumeReceive` path, the block is permanent and the receiver is bricked.
+  Map to: lzReceive, OApp
+
+- Pattern: Incorrect byte slice when validating _srcAddress peer; last 20 bytes extracted instead of first 20, validation always fails or passes wrong address
+  Where it hit: Maia (Ulysses) — RootBridgeAgent.requiresEndpoint modifier and BranchBridgeAgent._requiresEndpoint; `_srcAddress[PARAMS_ADDRESS_SIZE:]` used instead of `_srcAddress[:PARAMS_ADDRESS_SIZE]`
+  Severity: MEDIUM
+  Source: Solodit (row_id 10225)
+  Summary: The modifier that authenticates incoming LayerZero messages slices the wrong end of `_srcAddress`, always reading the destination agent's address rather than the remote source contract's. Every cross-chain message fails the peer check, shutting down all branch-to-root and root-to-branch communication. Tokens bridged to source-chain ports become permanently locked because the return channel is dead.
+  Map to: lzReceive, setPeer, OApp
+
+- Pattern: msg.sender captured as srcChainSender inside lzCompose flow; attacker specifies victim as _from and redirects composed action to steal victim funds
+  Where it hit: Tapioca — TapiocaOmnichainSender; `srcChainSender_` set to `msg.sender` of the compose initiator rather than the original cross-chain caller
+  Severity: HIGH
+  Source: Solodit (row_id 8311)
+  Summary: When a composed message is processed, the contract records `msg.sender` (the compose initiator, who can be an attacker) as `srcChainSender_` instead of the original OFT sender. An attacker initiates a compose call specifying a victim's address as the token source; the victim's funds are treated as the attacker's and redirected to the attacker's destination. Full fund theft for any user whose cross-chain message can be intercepted at the compose step.
+  Map to: lzReceive, OFT, OApp
+
+- Pattern: amount/share mismatch across chains in OFT cross-chain message; source debits amount=1 but destination credits based on share=max, draining protocol balance
+  Where it hit: Tapioca — BaseTOFT.SendToStrategy / BaseTOFTStrategyModule.strategyDeposit; `_share` passed verbatim from source but `_amount` recomputed from YieldBox ratio on destination
+  Severity: HIGH
+  Source: Solodit (row_id 11056)
+  Summary: The cross-chain payload carries both `amount` and `share` fields. On the source chain `amount = 1` is debited; on the destination chain `_amount` is recalculated from the YieldBox ratio using the attacker-supplied `_share = max`, crediting up to the full contract balance to the attacker. There is no validation that the encoded share corresponds to the burned amount. Any user can drain all bridged assets held in the OFT contract.
+  Map to: OFT, lzReceive, _lzSend
+
+- Pattern: Batch _lzSend loop sends entire msg.value in first iteration; subsequent calls in same transaction receive zero value and revert, reverting the whole transaction
+  Where it hit: StakeUp — StakeUpMessenger._batchSend; first `_lzSend` call passes `msg.value` as native fee; remaining iterations have no ETH left
+  Severity: HIGH
+  Source: Solodit (row_id 6792)
+  Summary: `_batchSend` iterates over a list of destination chains and calls `_lzSend` once per chain. The full `msg.value` is forwarded as the fee in the first call, leaving zero for every subsequent call. Each subsequent `_lzSend` reverts due to insufficient fee, which causes the entire batch transaction to revert. Multi-chain messaging is completely broken whenever more than one destination is specified.
+  Map to: _lzSend, MessagingFee
+
+- Pattern: _payNative returns only the quoted _nativeFee rather than msg.value; excess ETH from multiple lzSend calls in one transaction is trapped in the contract
+  Where it hit: Tapioca — OApp base _payNative override; functions that compose multiple LayerZero sends in a single transaction
+  Severity: MEDIUM
+  Source: Solodit (row_id 8300)
+  Summary: The `_payNative` override returns `_nativeFee` as the amount debited, but the full `msg.value` is still sent. When a single transaction fires multiple `_lzSend` calls, the second and later calls find no ETH remaining because the first call consumed only what it quoted. The excess ETH sent by the user for subsequent sends is left in the contract with no withdrawal path. Certain multi-step cross-chain operations are permanently broken.
+  Map to: _lzSend, MessagingFee, OApp
+
+- Pattern: Debug function bypasses LayerZero endpoint entirely, allowing privileged role to inject arbitrary messages and trigger unrestricted minting
+  Where it hit: LayerZeroAdapter — debug_forceReceiveMessage; function sends messages directly to the Bridge contract skipping all LayerZero verification
+  Severity: MEDIUM
+  Source: Solodit (row_id 3632)
+  Summary: A `debug_forceReceiveMessage` function exists in the deployed LayerZeroAdapter that allows a privileged caller to deliver an arbitrary message payload to the Bridge contract without going through LayerZero. This bypasses all DVN verification and peer authentication. Any address with access can mint NFTs without restriction or replay any message type, rendering LayerZero's security guarantees void for this contract.
+  Map to: lzReceive, OApp, setPeer
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

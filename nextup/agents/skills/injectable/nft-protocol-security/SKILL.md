@@ -151,6 +151,69 @@ Tag: `[TRACE:mint → property_assignment={method} → randomness_source={source
 - **Immutable metadata**: Token URI set at mint and never changeable → no metadata manipulation
 - **Trusted recipients only**: Safe transfers only to protocol-controlled addresses (not user-supplied) → callback revert/reentrancy not user-exploitable
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Reentrancy via `_safeMint` / `onERC721Received` callback before state update
+  Where it hit: `partnerFreeMint` in ZkImagine NFT; `HoneyBox.claim` batch-mint; `LeverageModule._safeMint` in limit-order module
+  Severity: HIGH
+  Source: Solodit (row_id 6062, 12987, 8676)
+  Summary: All three contracts invoke `_safeMint` before updating critical accounting (cooldown timestamps, claim flags, fee state). A malicious recipient's `onERC721Received` callback re-enters the minting function, bypassing per-user limits or stealing trading fees. Fixes applied the checks-effects-interactions pattern and/or a `nonReentrant` guard.
+  Map to: ERC721, safeMint, onERC721Received
+
+- Pattern: Royalty calculation uses returned `royaltyAmount` as a percentage rather than an absolute value, or double-charges pool instead of buyer
+  Where it hit: Bridge contract `_getRoyaltyPercentage` (row 3634); Caviar `PrivatePool.buy` double-call to `_getRoyalty` (row 12398); NFTX `MarketplaceUniversalRouterZap` overstated `wethSpent` (row 10496)
+  Severity: HIGH
+  Source: Solodit (row_id 3634, 12398, 10496)
+  Summary: In the bridge contract, `ERC2981.royaltyInfo` returns a token amount, not a basis-point percentage; treating it as a percentage causes massive overcharges. In Caviar, calling `_getRoyalty` twice lets a malicious NFT owner change the fee between calls and drain the pool. In NFTX, the sale price used for royalty calculation is overstated, causing buyers to overpay. All three demonstrate that royalty enforcement logic must be validated end-to-end against the actual sale price.
+  Map to: ERC721, ERC1155, marketplace, royalty
+
+- Pattern: Marketplace listing state not cleared on completion, enabling NFT theft via stale listing re-use
+  Where it hit: KimNFTMarketplace `_isListingValid()` weak check (row 3694); `ProtectedListings.sol` unlocked NFT front-run (row 4500)
+  Severity: HIGH
+  Source: Solodit (row_id 3694, 4500)
+  Summary: KimNFT fails to mark listings as completed, so an attacker can re-enter a finished listing and steal NFTs from other users. In Flayer's ProtectedListings, an unlocked-but-not-yet-withdrawn NFT is not considered an active listing, allowing a front-runner to redeem it before the rightful owner withdraws. Both require atomic state transitions from listed to withdrawn.
+  Map to: ERC721, marketplace
+
+- Pattern: `onERC721Received` not implemented in a contract that receives NFTs via `safeTransferFrom`, causing permanent revert / DoS
+  Where it hit: `UniswapV3Staking.stake()` (row 3978); `YieldAccount` unstake NFT from Ether.fi (row 5615); `TGKMainContract` (row 10776)
+  Severity: HIGH
+  Source: Solodit (row_id 3978, 5615, 10776)
+  Summary: Each contract attempts to receive an ERC721 via `safeTransferFrom` but does not implement `IERC721Receiver.onERC721Received`, causing every incoming transfer to revert. In the staking and unstaking cases, users cannot deposit or withdraw positions at all. The fix is to implement `onERC721Received` returning `IERC721Receiver.onERC721Received.selector`.
+  Map to: ERC721, onERC721Received, safeMint
+
+- Pattern: ERC1155 `_mint` triggers `_doSafeTransferAcceptanceCheck`, allowing a malicious receiver to revert and block the entire deposit queue
+  Where it hit: Y2K Finance `Carousel.sol` deposit queue (row 12631)
+  Severity: HIGH
+  Source: Solodit (row_id 12631)
+  Summary: The ERC1155 base `_mint` always calls back to the receiver, identical to ERC721 `safeMint`. A malicious depositor sets their receiver to always revert, which blocks processing of all preceding queued deposits and causes fund loss for other users. The fix overrides `_mint` to remove the safe-transfer acceptance check.
+  Map to: ERC1155, onERC721Received, safeMint
+
+- Pattern: NFT approval / operator rights persist across ownership changes, enabling the previous owner to drain the new owner's assets
+  Where it hit: FootiumEscrow ERC20/ERC721 approvals persist after club sale (row 11985); Magnetar router allows any approved-for-all operator to call `ERC721.approve` for arbitrary token IDs (row 8308)
+  Severity: HIGH
+  Source: Solodit (row_id 11985, 8308)
+  Summary: FootiumEscrow never revokes ERC721 approvals when a club NFT is transferred; the previous owner retains operator rights and can drain all player NFTs after the sale. Magnetar's `_processPermitOperation` lets any `isApprovedForAll` operator issue per-token approvals on behalf of the actual owner, escalating operator scope without owner consent. Both highlight that approvals must be cleared or validated on every ownership transition.
+  Map to: ERC721, marketplace
+
+- Pattern: NFT used as collateral can be withdrawn / re-used while a lien or loan remains active, causing bad debt
+  Where it hit: Particle Exchange `withdrawNftWithInterest` without active-lien check (row 11722); Astaria `settleAuction` called without verifying auction outcome (row 13270); stNXM vault owner retains NFT while vault appears under-collateralised (row 147)
+  Severity: HIGH
+  Source: Solodit (row_id 11722, 13270, 147)
+  Summary: Particle Exchange lets a lender withdraw the NFT collateral even while a second lien is still outstanding. Astaria's `settleAuction` does not check whether the underlying NFT was actually transferred, allowing a spoofed Seaport order to settle a non-existent auction. In stNXM, the vault owner can manipulate the staked NFT value to mint excess shares. All three result in under-collateralised positions and fund loss for counterparties.
+  Map to: ERC721, marketplace
+
+- Pattern: `tokenURI` / metadata manipulation via flash-loan inflated voting power or mutable on-chain state
+  Where it hit: VotingEscrow `balanceOfTokenAt` missing flash-loan guard (row 6713); `partnerFreeMint` NFT ID reuse across wallets bypasses per-ID time restriction (row 6063)
+  Severity: HIGH
+  Source: Solodit (row_id 6713, 6063)
+  Summary: In Alchemix's VotingEscrow, a missing snapshot check in `balanceOfTokenAt` allows a flash-loan of veALCX tokens to artificially inflate voting power and alter the `tokenURI` for any token. In ZkImagine, the time-restriction on `partnerFreeMint` tracks the wallet address but not the specific NFT ID, so transferring the partner NFT to a fresh wallet resets the cooldown and enables unlimited minting. Both demonstrate that token-level state tied to economic value must be anchored to immutable identifiers, not transferable addresses.
+  Map to: ERC721, tokenURI, safeMint
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

@@ -213,6 +213,83 @@ Tag: `[TRACE:enabled_hooks={list} → state_changes_in_before={YES/NO per hook} 
 - **Donation to full-range positions**: If all LPs use full-range positions (like Uniswap V2 style), tick manipulation doesn't affect distribution fairness
 - **Admin-only pool creation**: If pool creation with this hook requires admin authorization AND is enforced on-chain (not just docs), unauthorized pool attacks are blocked
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Unbounded loop over LP token array in afterSwap hook causes out-of-gas DoS
+  Where it hit: MultiRangeHook (Paladin) — permissionless range creation grows poolLpTokens array without bound; every swap triggers afterSwap iteration over all elements
+  Severity: HIGH
+  Source: Solodit (row_id 2083)
+  Summary: Because range creation is permissionless, an attacker adds enough ranges to make the afterSwap loop exceed the block gas limit. All swaps on the pool revert permanently. Fix: cap ranges per pool at a protocol-enforced maximum and make creation permissioned.
+  Map to: afterSwap, IHooks, PoolManager
+
+- Pattern: Wrong caller-authentication modifier on hooklet afterSwap/beforeSwap causes permanent DoS
+  Where it hit: ValkyrieHooklet (Paladin/Bunni) — onlyBunniHub modifier rejects calls that legitimately arrive from BunniHook, blocking all swaps on registered pools
+  Severity: HIGH
+  Source: Solodit (row_id 2085)
+  Summary: The hooklet's beforeSwap and afterSwap entry points check msg.sender against BunniHub, but the actual caller is BunniHook. Every callback reverts, making any pool using ValkyrieHooklet non-functional. Fix: replace onlyBunniHub with onlyBunniHook on both callbacks.
+  Map to: beforeSwap, afterSwap, IHooks, PoolManager
+
+- Pattern: Hook single-pool invariant overwritten by a second pool registration
+  Where it hit: BaseCustomAccounting (Uniswap V4 example) — hook stores a single PoolKey/PoolId; a second pool that registers the same hook silently overwrites it, locking liquidity in the first pool
+  Severity: HIGH
+  Source: Solodit (row_id 2465)
+  Summary: The hook is designed for one pool but _beforeInitialize does not revert when a second pool registers. The stored pool reference is overwritten, so all subsequent hook callbacks operate on the new pool while the first pool's liquidity is inaccessible. Fix: revert in _beforeInitialize if a pool is already registered.
+  Map to: beforeAddLiquidity, beforeRemoveLiquidity, IHooks, PoolManager
+
+- Pattern: Liquidity modification front-run bypasses slippage check via tick movement; removeLiquidity has no slippage check at all
+  Where it hit: BaseCustomAccounting (Uniswap V4 example) — external addLiquidity/removeLiquidity functions can be front-run by a swap that changes the current tick before the hook executes
+  Severity: HIGH
+  Source: Solodit (row_id 2463)
+  Summary: Because the hook routes liquidity changes through external entry points that check slippage after tick-state can change, a sandwiching swap can move the tick before the hook callback fires. removeLiquidity has no slippage check at all. addLiquidity's check also includes accrued fees, enabling unsafe casting that can bypass the limit entirely.
+  Map to: beforeAddLiquidity, beforeRemoveLiquidity, IHooks, PoolManager
+
+- Pattern: afterSwap fee misdirected to hook contract address instead of owner, permanently locking funds
+  Where it hit: UpliftOnlyExample — onAfterSwap sends the owner fee to address(this) instead of the owner's address
+  Severity: HIGH
+  Source: Solodit (row_id 2995)
+  Summary: The afterSwap callback computes an owner fee but transfers it to the hook contract rather than the owner. The contract has no withdrawal function for these tokens, so all collected fees are locked forever. Fix: change the transfer recipient in onAfterSwap to the stored owner address.
+  Map to: afterSwap, IHooks, PoolManager
+
+- Pattern: beforeSwap surge-fee logic misses rehypothecation vault yield changes, enabling sandwich attacks on vault yield events
+  Where it hit: BunniHookLogic (Bunni) — beforeSwap applies surge fee on rebalances but not on vault yield changes; an attacker sandwiches the yield accrual event with no surge fee cost
+  Severity: HIGH
+  Source: Solodit (row_id 3808)
+  Summary: The surge fee in beforeSwap is triggered by certain state changes but does not check for rehypothecation vault yield fluctuations. When a vault yield event occurs without triggering the surge, an attacker can sandwich it profitably. Fix: extend the surge-fee trigger to cover vault yield deltas and mirror the fix in BunniQuoter.
+  Map to: beforeSwap, IHooks, PoolManager
+
+- Pattern: afterSwapReturnDelta hook permission flag not encoded in hook address, causing CurrencyNotSettled revert on every swap when a dynamic protocol fee is set
+  Where it hit: AngstromL2 — the contract attempts to return a fee delta from afterSwap but the AFTER_SWAP_RETURNS_DELTA permission bit is absent from the hook address, so PoolManager rejects the unsettled delta
+  Severity: MEDIUM
+  Source: Solodit (row_id 418)
+  Summary: V4 requires the hook address to encode permission flags for each callback that mutates deltas. AngstromL2's afterSwap returns a fee override but the corresponding permission bit is not set in the address. PoolManager's settlement check then reverts with CurrencyNotSettled, blocking all swaps whenever a non-zero protocol fee is configured. Fix: encode AFTER_SWAP_RETURNS_DELTA in the hook address deployment salt.
+  Map to: afterSwap, IHooks, PoolManager
+
+- Pattern: beforeSwap fee logic inconsistency between hook and quoter causes incorrect fee charges and broken off-chain quotes
+  Where it hit: BunniHookLogic / BunniQuoter — quoteSwap and beforeSwap share fee logic but diverge in hook-fee modifier and curator-fee application
+  Severity: MEDIUM
+  Source: Solodit (row_id 928)
+  Summary: The hook's beforeSwap and the quoter's quoteSwap are meant to implement identical fee logic, but inconsistencies in when the hook-fee modifier and curator fee are applied cause users to be charged fees that differ from quoted amounts. Off-chain components reading the Swap event also receive incorrect data. Fix: extract shared fee logic into a single internal function called by both paths.
+  Map to: beforeSwap, IHooks, PoolManager
+
+- Pattern: beforeSwap surge fee calculation can exceed 100%, causing reverts and overcharging users on exact-output swaps
+  Where it hit: BunniHookLogic (Bunni) — surge fee is added on top of the base fee without a cap, pushing the total past 1e6 (100%) and causing arithmetic overflow or unexpected revert
+  Severity: MEDIUM
+  Source: Solodit (row_id 1360)
+  Summary: The beforeSwap logic computes a surge fee and adds it to the existing hook fee without checking that the sum does not exceed 100%. For exact-output swaps the overflow causes a revert; in other cases users are overcharged. Fix: deduct the hook fee from the surge fee component so the combined total is capped at 100%.
+  Map to: beforeSwap, IHooks, PoolManager
+
+- Pattern: beforeSwap uses spot price instead of TWAP, allowing attackers to manipulate the price and drain protocol profits
+  Where it hit: Uniswap V4 hook (contest finding) — profit calculation inside beforeSwap relies on the current pool price, which can be manipulated within the same transaction
+  Severity: HIGH
+  Source: Solodit (row_id 4502)
+  Summary: The hook reads the current sqrtPriceX96 from the pool slot to compute a profit share or fee inside beforeSwap. Because the price can be moved by a preceding swap in the same bundle, an attacker constructs a transaction that first pushes the price to an extreme, then triggers the hook callback to extract maximum value, then restores the price. Fix: replace spot price with a TWAP oracle for any value-sensitive calculation in beforeSwap.
+  Map to: beforeSwap, IHooks, PoolManager
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

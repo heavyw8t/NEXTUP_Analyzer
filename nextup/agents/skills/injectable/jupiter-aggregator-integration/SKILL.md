@@ -154,6 +154,82 @@ Tag: [TRACE:token_program_per_leg=YES/NO → token_2022_fee_accounted=YES/NO →
 - Program uses shared_accounts_route in a dedicated PDA with no user inputs beyond amount. Section 1 reorder risk low.
 - Swap is purely internal (no user-initiated routes). Platform-fee and slippage griefing paths reduced.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+All findings below come from publicly available audit reports or security assessments. URLs are directly accessible.
+
+---
+
+- Pattern: Inaccurate slippage calculation for small amounts or large slippage tolerances in exact-out mode
+  Where it hit: Jupiter Aggregator V6 / `apply_exact_out_fees_if_applicable` function
+  Severity: LOW
+  Source: https://hub.jup.ag/assets/files/swap-v6-offside-april-2024-0c8eea115e78830ed70ce748b47debfa.pdf
+  Summary: Offside Labs found that `apply_exact_out_fees_if_applicable` computed fees incorrectly when input amounts were small or when slippage tolerances were large. The accounting of actual transferred input token amounts from the user source token account was wrong in edge cases, meaning the protocol could under-charge or over-charge fees and miscalculate minimum output. The finding was fixed by the Jupiter team.
+  Map to: slippage_bps, route_plan
+
+---
+
+- Pattern: Raydium AMM pre-calculation inaccuracy causes wrong minimum-output enforcement
+  Where it hit: Jupiter Aggregator V6 / `calculate_swap_in_amount` (Raydium leg)
+  Severity: MEDIUM
+  Source: https://hub.jup.ag/assets/files/swap-v6-offside-april-2024-0c8eea115e78830ed70ce748b47debfa.pdf
+  Summary: Offside Labs identified that the pre-calculation of expected output for Raydium AMM legs inside `calculate_swap_in_amount` was inaccurate. Because Jupiter enforces the slippage check only on the final output token without re-evaluating intermediate legs, a Raydium leg with a stale or incorrect pre-calculation could cause the aggregator to pass a route that delivers less than the intended minimum output. The finding was marked Fixed.
+  Map to: slippage_bps, route_plan
+
+---
+
+- Pattern: Missing `SyncNative` when input token is wSOL, causing token-ledger desync
+  Where it hit: Jupiter Aggregator V6 / `set_token_ledger` instruction
+  Severity: LOW
+  Source: https://hub.jup.ag/assets/files/swap-v6-offside-april-2024-0c8eea115e78830ed70ce748b47debfa.pdf
+  Summary: When a user swaps native SOL and the aggregator wraps it into a wSOL token account, the token-account balance field is not updated until `SyncNative` is called. The `set_token_ledger` instruction recorded the pre-sync lamport balance as the ledger baseline, so the delta check after the swap compared wrong before/after values. An attacker could exploit the mismatch to have the protocol account fewer tokens as spent. Jupiter acknowledged but did not immediately fix this.
+  Map to: route_plan, slippage_bps
+
+---
+
+- Pattern: Integer overflow in swap USD amount computation across all swap instructions
+  Where it hit: Jupiter Perpetuals / all swap instructions computing `swap_usd_amount`
+  Severity: MEDIUM (informational/advisory level in OtterSec classification: OS-JPT-ADV)
+  Source: https://hub.jup.ag/assets/files/ottersec_perpetual_audit_report-573977253c463e70541dda93ac533d0b.pdf
+  Summary: OtterSec found that `swap_usd_amount`, typed as `u64`, overflows when the product of the received token's price and input amount exceeds `u64::MAX`. This produces a silently wrong USD value, corrupting fee calculations and swap accounting. A separate issue in the same audit found that swap functions lacked a check that `dispensing_custody` had sufficient liquidity, risking underflow if the vault was nearly empty. Both were reported in the October-November 2023 assessment.
+  Map to: slippage_bps, route_plan
+
+---
+
+- Pattern: Attacker-controlled position request updated before Keeper executes, enabling front-run profit
+  Where it hit: Jupiter Perpetuals / position request flow (OS-JPT-ADV-01)
+  Severity: HIGH
+  Source: https://hub.jup.ag/assets/files/ottersec_perpetual_audit_report-573977253c463e70541dda93ac533d0b.pdf
+  Summary: OtterSec (October-November 2023) found that a user could submit a position-open request then update it with new parameters between submission and Keeper execution. Because the Jupiter perpetuals swap uses a bundled Jupiter swap IX with a default 1% slippage tolerance that is checked only on market orders, the attacker could adjust parameters after observing pending price movement, profiting by front-running the Keeper. The fix required enforcing immutability of the request after submission.
+  Map to: slippage_bps, jupiter
+
+---
+
+- Pattern: Referral fee token accounts that are unclaimable, allowing griefing of protocol revenue
+  Where it hit: Jupiter Limit Order V2 / referral token account handling
+  Severity: LOW (informational in audit; operational impact on protocol revenue)
+  Source: https://dev.jup.ag/static/files/audits/limit-v2-offside.pdf
+  Summary: Offside Labs (April 2024) identified that users filling limit orders could supply a referral token account belonging to an address that can never sign (e.g. a system-owned account with no private key), routing fee revenue to an unclaimable account. The attacker bears no personal cost but permanently removes fees from the protocol. The minimum fee-rate requirement does not prevent this because it enforces the fee amount, not the recipient's reachability.
+  Map to: platform_fee, jupiter
+
+---
+
+- Pattern: Integrator passes arbitrary swap data to Jupiter with no on-chain validation, enabling token account substitution
+  Where it hit: Unizen Solana Swap contract (protocol wrapping Jupiter AMM)
+  Severity: MEDIUM (classified as a systemic risk note in the Hacken audit)
+  Source: https://hacken.io/audits/unizen/sca-unizen-unizen-solana-swap-jan2025/
+  Summary: Hacken (January 2025) found that Unizen's Solana contract allows integrators to provide arbitrary swap data directly to Jupiter AMM without validating source and receive token accounts, swap amounts, or minimum output values on-chain. A malicious integrator or a front-end attacker can substitute the destination token account to redirect output tokens, set minimum output to zero to permit sandwich attacks, or swap into a different token than the user expects. The protocol's reliance on off-chain data integrity with no on-chain binding is the root cause.
+  Map to: jupiter, slippage_bps, route_plan
+
+---
+
+> 7 sourced findings written. All findings are from publicly released audit reports with accessible PDF or web URLs. No findings were synthesized or inferred; each maps to a named finding or documented risk in the cited report.
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

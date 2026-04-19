@@ -154,6 +154,106 @@ Tag: [TRACE:jit_partial_handled=YES/NO → fee_routing_correct=YES/NO → fee_re
 - Wrapper uses a single fixed market (e.g. SOL-PERP). Sections 3c and 5c reduced.
 - IF staking not used. Section 4b does not apply.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+Sourced from: Drift Protocol incident reports, official CHANGELOG (drift-labs/protocol-v2), and published audit summaries.
+Local CSV contributes 3 findings (row_index 104, 60, 13180); the entries below are sourced from the web.
+
+---
+
+- Pattern: Unrealized PnL withdrawal without offsetting loss realization
+  Where it hit: Drift Protocol v1, vAMM / PnL settlement logic
+  Severity: CRITICAL
+  Source: https://driftprotocol.medium.com/drift-protocol-technical-incident-report-2022-05-11-eedea078b6d4
+  Summary: Users could realize positive PnL and immediately withdraw collateral before equivalent negative PnL was settled on the opposing side. An attacker deposited $1.75M, exploited the gap, and withdrew $11.75M. The shortfall reached $14.5M before the exchange was paused.
+  Map to: drift_program, PerpMarket, insurance_fund
+
+---
+
+- Pattern: Unchecked leverage extended through long-short imbalance in vAMM
+  Where it hit: Drift Protocol v1, leverage calculation engine
+  Severity: HIGH
+  Source: https://driftprotocol.medium.com/drift-protocol-technical-incident-report-2022-05-11-eedea078b6d4
+  Summary: The protocol extended leverage uniformly regardless of the long-short skew. As imbalance grew, shorts should have received less leverage, but the system continued offering excess free collateral to the short side, amplifying the vAMM's unrealized loss exposure until the terminal state showed $25.6M divergence between unrealized and realized PnL.
+  Map to: drift_program, PerpMarket, amm
+
+---
+
+- Pattern: Insurance fund cross-market spillover (insufficient market isolation)
+  Where it hit: Drift Protocol v1, insurance fund architecture
+  Severity: HIGH
+  Source: https://driftprotocol.medium.com/drift-protocol-technical-incident-report-2022-05-11-eedea078b6d4
+  Summary: Users could withdraw positive PnL directly from the insurance fund's fee-pool budget rather than being constrained to their own market's risk pool. The insurance fund was not segmented per market, so one market's exploitation drained reserves intended for all markets.
+  Map to: insurance_fund, drift_program
+
+---
+
+- Pattern: Funding rate direction inverted (sign flip bug)
+  Where it hit: Drift Protocol v2, funding rate accrual (fixed in v2.68.0, 2024-03-05)
+  Severity: HIGH
+  Source: https://raw.githubusercontent.com/drift-labs/protocol-v2/master/CHANGELOG.md
+  Summary: The funding rate direction could flip, causing long holders to receive payment when the rate was positive (longs should pay shorts) and vice versa. Any wrapper reading the funding rate sign to compute user-level PnL would produce inverted values. Fixed by patching the funding update path.
+  Map to: drift_program, PerpMarket, funding_rate
+
+---
+
+- Pattern: Revenue pool settles to insurance fund during unhealthy utilization
+  Where it hit: Drift Protocol v2, insurance fund settlement (fixed in v2.23.0, 2023-04-03)
+  Severity: MEDIUM
+  Source: https://raw.githubusercontent.com/drift-labs/protocol-v2/master/CHANGELOG.md
+  Summary: The protocol allowed revenue pool proceeds to be routed into the insurance fund even when spot borrow utilization was at an unhealthy level. A wrapper integrating IF staking would see inflated IF balances that could not be safely withdrawn without triggering undercollateralization in the spot market.
+  Map to: insurance_fund, SpotMarket, drift_program
+
+---
+
+- Pattern: Admin could withdraw from insurance fund without restriction
+  Where it hit: Drift Protocol v2, insurance fund admin controls (fixed in v2.76.0, 2024-04-09)
+  Severity: HIGH
+  Source: https://raw.githubusercontent.com/drift-labs/protocol-v2/master/CHANGELOG.md
+  Summary: The admin authority had an unchecked path to withdraw funds directly from the insurance fund account. Any wrapper modeling IF balances as a floor for socialized loss coverage would compute incorrect safety margins, as the IF could be drained to zero by admin action without triggering the protocol's own loss-socialization path.
+  Map to: insurance_fund, drift_program
+
+---
+
+- Pattern: Division-by-zero in liability transfer when covering margin shortage
+  Where it hit: Drift Protocol v2, liquidation / liability transfer math (fixed in v2.77.0, 2024-04-13)
+  Severity: HIGH
+  Source: https://raw.githubusercontent.com/drift-labs/protocol-v2/master/CHANGELOG.md
+  Summary: `calculate_liability_transfer_to_cover_margin_shortage` could divide by zero when certain inputs were at boundary values during liquidation. The transaction would revert, preventing timely liquidation and leaving an undercollateralized position open. Wrappers that call liquidation CPIs without retry logic would stall.
+  Map to: drift_program, PerpMarket, SpotMarket
+
+---
+
+- Pattern: Oracle offset orders executable at negative or zero price
+  Where it hit: Drift Protocol v2, order matching / AMM (fixed in v2.83.0, 2024-06-06)
+  Severity: MEDIUM
+  Source: https://raw.githubusercontent.com/drift-labs/protocol-v2/master/CHANGELOG.md
+  Summary: Oracle offset orders lacked a minimum price floor. If the oracle price was low enough and the offset was negative, orders could execute at economically invalid (zero or negative) prices, enabling extraction of collateral via manipulated mark-oracle divergence. The fix enforces a positive minimum price at fill time.
+  Map to: drift_program, PerpMarket, amm, OrderParams
+
+---
+
+- Pattern: Pyth pull oracle feed ID not validated after atomic update
+  Where it hit: Drift Protocol v2, oracle ingestion (fixed in v2.153.0, 2025-12-30)
+  Severity: HIGH
+  Source: https://raw.githubusercontent.com/drift-labs/protocol-v2/master/CHANGELOG.md
+  Summary: After a Pyth pull oracle atomic price update, the program did not re-check that the feed ID matched the expected market oracle. An attacker who could supply an arbitrary Pyth price account could substitute a different feed's price into a PerpMarket's oracle slot. Any wrapper that routes CPI through Drift's update-oracle instruction without independently verifying the feed ID is exposed to this oracle substitution vector.
+  Map to: drift_program, PerpMarket, SpotMarket
+
+---
+
+- Pattern: Margin calculation for spot orders assumes oracle fill price regardless of order type
+  Where it hit: Drift Protocol v2, order simulation / margin check (Neodyme audit ND-DFT1, 2024)
+  Severity: MEDIUM
+  Source: https://cdn.prod.website-files.com/6310e7dee49f0866da8eed4c/6686bbdfe7c6e5a997cc51bc_Neodyme%20-%20Drift%20Security%20Audit.pdf
+  Summary: During pre-fill margin simulation for spot market orders, Drift assumed execution at the oracle price even for limit orders that would fill at a different (potentially worse) price. A wrapper placing spot limit orders below oracle could pass margin checks pre-fill but breach minimum margin at actual execution, resulting in an undercollateralized fill that should have been rejected.
+  Map to: drift_program, SpotMarket, OrderParams
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

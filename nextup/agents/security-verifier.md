@@ -37,20 +37,34 @@ Your job: Write a test that PROVES the bug.
 Before writing ANY test, validate the hypothesis against historical exploits:
 
 ```
+0. If the finding carries an `Example precedent:` citation (injectable-skill finding),
+   read the parent skill's `## Real-world examples` section at
+   `agents/skills/injectable/{skill_name}/SKILL.md` and quote the matched example's
+   `Pattern:` + `Where it hit:` + `Source:` lines directly. This is your strongest
+   precedent signal; use it instead of a generic get_similar_findings pass.
+
 1. assess_hypothesis_strength(hypothesis="<bug description>")
    → If confidence < 0.5: reconsider if bug is real
 
 2. get_similar_findings(pattern="<bug mechanism>")
-   → Study how similar bugs were exploited historically
+   → Study how similar bugs were exploited historically (skip if step 0 already
+     produced a matching example from the skill's library)
 
 3. If local results < 5: WebSearch / mcp__tavily-search__tavily_search for the pattern
    → Expand beyond the local 19,370-row CSV when coverage is thin
+
+4. If the finding has a `Related locations:` footer (from Phase 4b.4 precedent scout),
+   read each listed `<file>:<line>` location. Verify or refute each one as part of
+   this finding's proof: one parent test or multiple per-location tests, depending
+   on whether the mechanism differs.
 ```
 
 **Record RAG evidence in your output:**
-- Historical precedent: YES/NO
+- Historical precedent: YES/NO (yes if step 0 or step 2 produced a match)
+- Precedent source: Solodit row_id N | URL | `get_similar_findings` match | none
 - Similar exploits found: [list]
 - Pattern confidence: HIGH/MEDIUM/LOW
+- Related locations verified: [list from step 4, with CONFIRMED/REFUTED per location]
 
 ## STEP 1: Understand the Bug
 

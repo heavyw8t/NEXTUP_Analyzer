@@ -199,6 +199,83 @@ Tag: `[TRACE:collateral_valuation={exchange_rate/fixed/market} → reward_attrib
 - **Protocol IS the LST issuer**: If the protocol is Lido/Rocket Pool/Frax itself, this skill doesn't apply — use protocol-type skills instead
 - **Non-collateral use**: If LSTs are only used as swap intermediary (receive and immediately swap out), most accounting concerns don't apply
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: stETH withdrawal queue stores nominal amounts instead of shares; negative rebase causes insolvency where late claimants receive nothing
+  Where it hit: Renzo Protocol WithdrawQueue (ezETH/stETH cross-chain restaking)
+  Severity: HIGH
+  Source: Solodit (row_id 12)
+  Summary: The WithdrawQueue stores `amountToRedeem` as a fixed stETH amount at request time. If stETH rebases negatively between request and claim, the queue contract's actual stETH balance falls below the sum of pending amounts. First claimants drain the pool; late claimants revert permanently. Fix is to store and redeem in stETH shares via `getSharesByPooledEth()`.
+  Map to: stETH, withdrawal_queue, rebase, slashing
+
+- Pattern: 1 stETH == 1 ETH hardcoded assumption; `ethPerDerivative` queries wstETH→stETH rate then equates stETH to ETH at 1:1
+  Where it hit: Asymmetry Finance SafETH WstEth derivative (multi-LST staking aggregator)
+  Severity: HIGH
+  Source: Solodit (row_id 42)
+  Summary: `WstEth.ethPerDerivative()` calls `wstETH.stEthPerToken()` to get stETH per wstETH, but then treats that stETH amount as 1:1 with ETH. During the June 2022 depeg (stETH at ~0.93 ETH on Curve), the function overestimated wstETH value by ~7%. The `withdraw` function set `minOut` as a 1% slippage on stETH balance, causing all unstake calls to revert during depeg conditions.
+  Map to: wstETH, stETH, exchange_rate
+
+- Pattern: Protocol fee tracked in nominal stETH amounts; not scaled to current shares ratio after rebase, causing over-withdrawal and insolvency
+  Where it hit: LidoVault (fixed/variable yield vault using Lido staking)
+  Severity: HIGH
+  Source: Solodit (row_id 3)
+  Summary: `totalProtocolFee` is accumulated in raw stETH amounts but `totalEarnings` is computed using the current stETH/ETH shares ratio. The fee is not scaled, so `totalEarnings` is overestimated. Users can withdraw more stETH than the vault holds, pushing the protocol into insolvency. Fix is to track `totalProtocolFee` as shares.
+  Map to: stETH, rebase, exchange_rate
+
+- Pattern: mETH exchange rate manipulable via unsanctioned oracle record updates; no sanity bounds on `currentTotalValidatorBalance` allows mint/burn at artificial rate
+  Where it hit: Mantle mETH staking protocol (mETH oracle record management)
+  Severity: HIGH
+  Source: Solodit (row_id 26)
+  Summary: The mETH contract's record update function lacks sanity checks on `currentTotalValidatorBalance`. An attacker who can submit a record (or exploit a window in which the admin can post an incorrect record) can set an arbitrary exchange rate in one transaction, then mint mETH at the deflated rate or burn at the inflated rate before the admin corrects it. After an incorrect update, only the admin can recover, making this a high-severity DOS with theft vector.
+  Map to: exchange_rate, slashing
+
+- Pattern: stETH 1-2 wei transfer shortfall from share rounding causes downstream balance checks to fail or DoS
+  Where it hit: Protocol holding stETH (exact amount cited: 1-2 fewer shares than requested)
+  Severity: HIGH
+  Source: Solodit (row_id 10)
+  Summary: stETH's internal share-based accounting delivers 1-2 wei fewer tokens than the requested `amount` on `transfer`/`transferFrom`. Protocols that call `safeTransfer(stETH, recipient, amount)` and then check `balanceOf(recipient) >= amount` fail intermittently. The report confirms denial-of-service across the contract's core functionality. Fix is to use `transferShares()` or accept a 1-2 wei tolerance in balance checks.
+  Map to: stETH, rebase
+
+- Pattern: stETH rewards accrue in queue intermediate contract but only requested amounts are tracked; rebase delta is permanently unclaimable
+  Where it hit: Mellow Flexible Vaults (yield vault with stETH queue)
+  Severity: MEDIUM
+  Source: Solodit (row_id 83)
+  Summary: When stETH sits in a withdrawal queue contract between request and claim, rebases increase the contract's stETH balance. The queue only tracks the originally-requested nominal amounts. The delta earned during the queue period has no accounting entry and is permanently stuck. This is the Mellow M-9 finding pattern: incompatibility with rebasing tokens means rewards lock in queue contracts with no recovery path.
+  Map to: stETH, rebase, withdrawal_queue
+
+- Pattern: rETH oracle calls non-existent function `getExchangeRatio()` instead of the correct `getExchangeRate()`; entire asset pricing subsystem halts
+  Where it hit: LybraRETHVault (CDP/stablecoin protocol accepting rETH collateral)
+  Severity: MEDIUM
+  Source: Solodit (row_id 134)
+  Summary: `LybraRETHVault.getAssetPrice()` calls `rETH.getExchangeRatio()` which does not exist on the Rocket Pool rETH contract. The correct function is `getExchangeRate()`. Every operation dependent on asset pricing (minting, redemptions, liquidations) reverts, fully halting the vault. Confirmed by LybraFinance.
+  Map to: rETH, exchange_rate
+
+- Pattern: Share price not reduced after stETH slashing event; inflated price allows depositors to withdraw more than available balance
+  Where it hit: DepositETH contract (Lido stETH yield-bearing deposit system)
+  Severity: MEDIUM
+  Source: Solodit (row_id 93)
+  Summary: The `DepositETH` function's share price calculation does not handle reductions in the Lido stETH balance caused by slashing events. After a slash, the protocol's stETH balance drops but the share price remains stale, allowing users to redeem shares at a price that implies more stETH than is held. The report recommends updating the share price calculation to account for balance decreases.
+  Map to: stETH, slashing, exchange_rate, rebase
+
+- Pattern: LidoVault slashing after vault end fails to account for prior variable-user income withdrawals, causing fund lock and incorrect earnings calculation
+  Where it hit: LidoVault variable/fixed yield vault
+  Severity: MEDIUM
+  Source: Solodit (row_id 99)
+  Summary: `LidoVault.vaultEndedWithdraw` does not factor in income already withdrawn by variable users before a slashing event. When slashing occurs post-vault-end, the total-earnings calculation is wrong: it subtracts the slashing loss from a base that excludes prior withdrawals, producing an undercount or underflow that permanently locks remaining funds. A PoC was provided and the team issued a fix.
+  Map to: stETH, slashing, withdrawal_queue
+
+- Pattern: wstETH oracle price derived from `getStETHByWstETH()` only (wstETH→stETH), ignoring stETH→ETH conversion step; protocol misprices wstETH in ETH terms
+  Where it hit: Lido adapter in a yield/RWA cross-chain protocol
+  Severity: MEDIUM
+  Source: Solodit (row_id 173)
+  Summary: The adapter's `price()` function calls `IWstETH(token).getStETHByWstETH()` and returns the result as the ETH price of wstETH. This gives the wstETH/stETH rate, not wstETH/ETH. When stETH is not at a 1:1 peg (depeg or slashing socialization), the protocol misprices collateral. The harvestable-amount calculation and all downstream valuation logic are incorrect, enabling over-borrowing or unfair liquidations.
+  Map to: wstETH, stETH, exchange_rate
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

@@ -19,6 +19,8 @@ Every finding MUST use this format:
 **Description**: What's wrong
 **Impact**: What can happen (if finding is in a shared utility/library, list impact at EACH consumption point)
 **Evidence**: Code snippets
+**Example precedent** (optional, injectable-skill findings only): Solodit row_id N OR URL pointing to the matched real-world example from the parent skill's `## Real-world examples` section. See `rules/phase4b-precedent-scout.md`.
+**Related locations** (optional, appended by precedent scout): `<file>:<line>` pairs — scope locations the scout flagged as MEDIUM-confidence twins of this finding. Verification agents in Phase 5 visit these as part of this finding's proof-or-refute sweep.
 
 ### Precondition Analysis (if PARTIAL or REFUTED)
 **Missing Precondition**: [What blocks this attack]

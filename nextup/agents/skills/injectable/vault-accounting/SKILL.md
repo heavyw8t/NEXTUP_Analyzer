@@ -120,6 +120,69 @@ Tag: `[TRACE:loss_event → fee_base_unchanged → feesOwed > available_assets �
 - Are withdrawal amounts computed at request time or execution time?
 - Can a large withdrawal request starve subsequent requestors?
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Direct token transfer inflates totalAssets before share calculation, causing zero shares for legitimate depositors
+  Where it hit: StakedUSH vault (2025 audit)
+  Severity: HIGH
+  Source: Solodit (row_id 721)
+  Summary: The vault calculates shares using totalSupply and totalAssets, but an attacker can send tokens directly to the contract to inflate totalAssets before a deposit executes. A legitimate depositor receives 0 shares and loses their funds. The root cause is reading balanceOf(address(this)) inside convertToShares without accounting for direct transfers.
+  Map to: ERC4626, totalAssets, totalShares, convertToShares
+
+- Pattern: Donation attack inflates share price to zero out victim LP contributions (first-depositor / share-inflation)
+  Where it hit: AaveHyperdrive and DsrHyperdrive (Hyperdrive audit)
+  Severity: HIGH
+  Source: Solodit (row_id 7896)
+  Summary: An attacker front-runs an LP by donating assets to artificially inflate the assets-per-share ratio so the victim mints 0 yield shares. The attacker then redeems their own shares to claim the victim's contributed assets. No virtual shares or burned initial shares are present to prevent the reset of share price when total supply reaches zero.
+  Map to: ERC4626, totalAssets, totalShares, convertToShares, convertToAssets
+
+- Pattern: Shares not excluded from effectiveSupply during withdrawal request, allowing convertToAssets inflation via yield donation
+  Where it hit: Morpho-based vault with initiateWithdraw flow (2025 audit)
+  Severity: HIGH
+  Source: Solodit (row_id 985)
+  Summary: When a user calls initiateWithdraw(), their collateral shares are not burned. Those shares continue to count in effectiveSupply(), so an attacker can donate yield tokens to inflate the collateral price reported by convertToAssets(). This lets the attacker borrow a disproportionate amount, draining the lending market.
+  Map to: ERC4626, totalAssets, totalShares, convertToAssets
+
+- Pattern: totalAssets inconsistency between cached and actual values enables deposit/redeem arbitrage
+  Where it hit: LMPVault (Tokemak, 2023 Sherlock audit)
+  Severity: HIGH
+  Source: Solodit (row_id 10467)
+  Summary: previewDeposit, previewMint, previewWithdraw, and previewRedeem all use a cached totalAssets (totalIdle + totalDebt), while _withdraw and _calcUserWithdrawSharesToBurn use the actual on-chain debtValue sum. An attacker deposits when totalAssets_cached < totalAssets_actual, receives more shares than fair value, then redeems after the cache is updated for a risk-free profit at the expense of other shareholders.
+  Map to: ERC4626, totalAssets, totalShares, convertToShares, convertToAssets, previewDeposit, previewRedeem
+
+- Pattern: State-mutating function called after previewDeposit inside deposit(), making previewDeposit stale relative to execution
+  Where it hit: PerpetualAtlanticVaultLP (Dopex, 2023 Sherlock audit)
+  Severity: HIGH
+  Source: Solodit (row_id 10533)
+  Summary: Inside deposit(), previewDeposit is evaluated first, then perpetualAtlanticVault.updateFunding() is called, which increases _totalCollateral. When the user immediately redeems in the same block, convertToAssets uses the newly increased collateral, so the depositor extracts immediate profit. Moving updateFunding() before previewDeposit eliminates the sandwich window.
+  Map to: ERC4626, totalAssets, convertToAssets, previewDeposit, previewRedeem
+
+- Pattern: Rounding direction wrong in previewWithdraw / convertToShares causes zero shares burned on withdrawal
+  Where it hit: AutoPxGmx and AutoPxGlp vaults (Pirex, 2023 C4 audit)
+  Severity: HIGH
+  Source: Solodit (row_id 14114)
+  Summary: PirexERC4626.convertToShares uses mulDivDown, so for small withdrawals the shares-to-burn calculation rounds to zero. The withdraw function then transfers assets to the user while burning no shares, allowing repeated free asset extraction until the vault is drained.
+  Map to: ERC4626, totalAssets, totalShares, convertToShares, previewRedeem
+
+- Pattern: Time-decay vesting boundary: _vestingInterest() returns 0 at vesting start, exposing full accrued interest to flash-loan harvest
+  Where it hit: ERC4626 vault with locked-profit vesting mechanism (Sherlock 2023)
+  Severity: HIGH
+  Source: Solodit (row_id 1143)
+  Summary: The _vestingInterest() function returns 0 when the vesting period resets, then grows linearly. At the moment of reset, totalAssets() includes the entire newly reported interest as immediately available. A flash-loan depositor can capture the entire epoch's yield in one block before any time-decay accrues.
+  Map to: ERC4626, totalAssets, convertToShares, convertToAssets
+
+- Pattern: Wrong rounding direction across deposit/mint/withdraw/redeem paths allows systematic value extraction
+  Where it hit: Vault contract (Popcorn/RedVeil, 2023 Sherlock audit)
+  Severity: MEDIUM
+  Source: Solodit (row_id 13357)
+  Summary: The vault uses Math.Rounding.Down in convertToShares for both deposit and withdraw paths. EIP-4626 requires withdraw to round up shares burned (favoring the vault) and deposit to round down. With the wrong direction a user calling withdraw burns 0 shares when the asset amount is small relative to total supply, extracting assets for free.
+  Map to: ERC4626, totalAssets, totalShares, convertToShares, convertToAssets, previewDeposit, previewRedeem
+
+
 ## Step Execution Checklist
 
 | Section | Required | Completed? | Notes |

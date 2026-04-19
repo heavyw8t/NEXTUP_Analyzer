@@ -222,6 +222,69 @@ Tag: `[TRACE:vault_pausable={YES/NO} → pause_handling={graceful/propagates_rev
 - **Idle assets below gas cost threshold**: If idle assets earn less yield than the gas cost to deposit them, keeping them idle is rational behavior, not a bug.
 - **Protocol designed as pass-through**: If the protocol explicitly presents itself as a non-yield-optimizing wrapper (e.g., access control layer over a vault), yield dilution from idle assets may be by design.
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Caller uses `convertToShares()` on an asset that is already a share token (sDAI), returning a deflated amount instead of the raw share value.
+  Where it hit: AssetTotsDaiLeverageExecutor (leveraged position manager integrating sDAI/ERC4626)
+  Severity: HIGH
+  Source: Solodit (row_id 8722)
+  Summary: `getAsset()` calls `convertToShares()` on sDAI, but sDAI is itself a share. The call converts shares-to-shares, producing a value far lower than the underlying asset amount. Users receive far fewer assets than entitled during lever-down operations.
+  Map to: IERC4626, convertToShares, external_vault, vault_caller
+
+- Pattern: Protocol caches `totalAssets` for preview functions but uses the live (actual) value for withdrawals. The gap between cached and actual can be arbitraged across deposit and redeem in the same block.
+  Where it hit: LMPVault (yield aggregator that routes assets into multiple destination vaults)
+  Severity: HIGH
+  Source: Solodit (row_id 10467)
+  Summary: `previewDeposit`, `previewMint`, `previewWithdraw`, and `previewRedeem` all read `totalAssets_cached`, while `_withdraw` and `_calcUserWithdrawSharesToBurn` read `totalAssets_actual`. An attacker deposits when cached < actual to receive excess shares, then redeems after the cache syncs, extracting value from other shareholders.
+  Map to: IERC4626, convertToAssets, convertToShares, previewRedeem, external_vault, vault_caller
+
+- Pattern: Caller protocol uses `convertToAssets()` instead of `previewRedeem()` for `maxWithdraw`/`maxRedeem`, returning an overestimate that violates ERC4626 and breaks downstream integrators.
+  Where it hit: PoolTogether V5 Prize Vault (wrapper that deposits into external ERC4626 yield vault)
+  Severity: MEDIUM
+  Source: Solodit (row_id 8111)
+  Summary: `maxWithdraw` and `maxRedeem` call `yieldVault.convertToAssets()`, which per EIP-4626 excludes fees and limits. The returned value can exceed what is actually withdrawable, causing downstream protocols that rely on these functions to over-allocate or revert. The fix is to use `yieldVault.previewRedeem()`.
+  Map to: IERC4626, convertToAssets, previewRedeem, external_vault, vault_caller
+
+- Pattern: Caller protocol does not propagate external vault's `maxDeposit` cap into its own `maxDeposit`/`maxMint`, allowing deposits that will revert when forwarded to the external vault.
+  Where it hit: PoolTogether V5 Prize Vault (wraps external ERC4626 yield vault)
+  Severity: MEDIUM
+  Source: Solodit (row_id 10974)
+  Summary: The outer vault's `maxDeposit` and `maxMint` return values unconstrained by the underlying yield vault's limits. Users deposit up to the outer limit, the outer vault forwards the assets to the yield vault, and the call reverts because the yield vault is at capacity. ERC4626 compliance requires the outer vault to respect inner vault caps.
+  Map to: IERC4626, maxDeposit, external_vault, vault_caller
+
+- Pattern: Caller protocol uses `previewRedeem` to estimate withdrawal amounts from external meta-vaults without checking actual availability (`maxWithdraw`). When a vault is paused or under-collateralised, the withdrawal reverts for all users even when other vaults could cover it.
+  Where it hit: pUSDeVault (multi-vault withdrawal router for USDe)
+  Severity: MEDIUM
+  Source: Solodit (row_id 1341)
+  Summary: `redeemRequiredBaseAssets()` calls `ERC4626Upgradeable::previewRedeem` to size each vault's redemption. `previewRedeem` ignores pause states and redemption limits, so if one meta-vault is paused or has lost value, the computed shares exceed `maxRedeem`, and the redemption reverts even though other vaults are healthy. Using `maxWithdraw` per vault fixes the ordering logic.
+  Map to: IERC4626, previewRedeem, maxDeposit, external_vault, vault_caller
+
+- Pattern: Protocol reads `previewRedeem` on an AAVE ERC4626 wrapper to value collateral reserves, but AAVE's implementation includes withdrawal limits and pause states, causing systematic underestimation of reserve value.
+  Where it hit: Lending protocol integrating AAVE ERC4626 vaults as rehypothecated collateral
+  Severity: MEDIUM
+  Source: Solodit (row_id 3786)
+  Summary: The protocol calls `previewRedeem` on AAVE vaults to compute the USD value of pooled reserves. AAVE's non-standard `previewRedeem` deducts withdrawal caps and paused-market haircuts, returning less than `convertToAssets` would. This undervalues live collateral and can trigger incorrect liquidations or blocked withdrawals. The fix is to avoid AAVE vaults or proxy the call through a spec-compliant wrapper.
+  Map to: IERC4626, previewRedeem, convertToAssets, external_vault, vault_caller
+
+- Pattern: Protocol calls `getTotalAssetDeposits` after an EigenLayer strategy update but the function only counts assets in the new NodeDelegator, not the assets still sitting in the replaced strategy. Share price drops transiently, causing over-minting for new depositors.
+  Where it hit: KelpDAO rsETH minting contract (uses EigenLayer strategies as external vaults)
+  Severity: MEDIUM
+  Source: Solodit (row_id 9605)
+  Summary: When `updateAssetStrategy` is called, the old strategy's balance is removed from `getTotalAssetDeposits` before those assets are moved. The reduced denominator lowers `rsETH`'s implied price, so depositors that front-run the migration receive more `rsETH` than their deposit is worth. The fix is to migrate balances atomically or include the old strategy's balance during the transition window.
+  Map to: IERC4626, convertToAssets, external_vault, vault_caller
+
+- Pattern: Protocol switches the external vault address for a strategy without tracking realised losses. Early withdrawers receive full amounts; later withdrawers absorb the loss created by the divestment shortfall.
+  Where it hit: Yield aggregator that can migrate between Yearn-style external vaults (row 1530)
+  Severity: MEDIUM
+  Source: Solodit (row_id 1530)
+  Summary: The divestment function updates the vault address and attempts a full withdrawal from the old vault. If the old vault returns fewer assets than the recorded balance (e.g. slippage, locked funds), the shortfall is silently absorbed into `totalAssets`. Users who withdraw immediately after the address change receive full value; users who withdraw later take the loss. The fix is to track losses explicitly and apply them pro-rata.
+  Map to: IERC4626, convertToAssets, external_vault, vault_caller
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |
