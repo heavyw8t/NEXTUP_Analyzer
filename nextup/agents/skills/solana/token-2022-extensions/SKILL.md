@@ -111,6 +111,174 @@ For mints with MintCloseAuthority extension:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+Sources: Neodyme blog (neodyme.io/en/blog/token-2022/), Halborn Token-2022 bugfix review, Solana post-mortem (June 2025), Zealynx Security 2026 audit guide, Solana Foundation security audits (anza-xyz/security-audits).
+
+---
+
+## [T22-W1] Transfer Fee Not Deducted From Received Amount — Protocol Accounting Mismatch
+
+**Severity**: High
+**Extension**: TransferFeeConfig
+**Source**: Neodyme — "SPL Token-2022: Don't shoot yourself in the foot with extensions"
+
+**Description**: The transfer fee is deducted from the *recipient's* received amount, not from the sender's balance. When a protocol records the gross amount sent rather than the net amount received, internal accounting diverges from actual token balances. Every deposit, swap, or escrow operation that uses the pre-transfer amount as its book entry accumulates error proportional to the fee rate.
+
+**Attack pattern**: Attacker deposits `X` tokens into a lending or AMM vault. Protocol records `X` as collateral. Vault actually holds `X - fee`. Attacker borrows against the inflated collateral value. Repeated at scale this produces a shortfall equal to `N * fee` per round-trip.
+
+**Required check**: Use `transfer_checked_with_fee` and pass the calculated fee, or read the recipient token account balance before and after transfer and use the delta as the book entry — never use the instruction `amount` parameter directly for accounting.
+
+**References**:
+- https://neodyme.io/en/blog/token-2022/
+- https://chainstack.com/solana-token-2022-fee-transfer-hooks/
+
+---
+
+## [T22-W2] Transfer Fee Circumvention via Confidential Transfer Deposit/Withdraw
+
+**Severity**: Critical
+**Extension**: ConfidentialTransfer + TransferFeeConfig
+**Source**: Halborn Token-2022 Bugfix Review (November 2022 audit)
+
+**Description**: The `deposit` and `withdraw` instructions in the ConfidentialTransfer extension did not validate that source and destination token wallets matched. An attacker could specify different token wallets in these instructions, converting them into fee-free transfer vectors that bypassed TransferFeeConfig entirely. Identified as a critical pre-production finding; fixed by Solana Labs by removing the `destination_token` parameter from both instructions (commit `3ddb3c7404d23146a390150e241831e116c5cc8d`).
+
+**Attack pattern**: Caller invokes `deposit` with source account A and destination account B (different accounts). Tokens move without triggering fee collection logic. Works even when TransferFeeConfig mandates a non-zero basis-point fee.
+
+**References**:
+- https://www.halborn.com/blog/post/solana-token-ception-token-2022-bugfix-review
+
+---
+
+## [T22-W3] NonTransferable Token Bypass via Confidential Transfer
+
+**Severity**: Critical
+**Extension**: ConfidentialTransfer + NonTransferable
+**Source**: Halborn Token-2022 Bugfix Review (November 2022 audit)
+
+**Description**: The ConfidentialTransfer extension did not check whether a mint had the NonTransferable extension enabled. Users could deposit soulbound (non-transferable) tokens into a confidential account and then transfer them to a third party, completely bypassing the transfer restriction. Identified in the same pre-production audit; fixed across three commits (`6a102589`, `92a8e6b2`, `b973e474`).
+
+**Protocol-level impact**: Any lending protocol that uses NonTransferable tokens as collateral (e.g., staked-position receipts, soulbound loyalty tokens) could receive collateral that should never leave the depositor's wallet. If the protocol later attempts to seize or liquidate the collateral it cannot transfer it back out, causing stuck funds or liquidation failure.
+
+**References**:
+- https://www.halborn.com/blog/post/solana-token-ception-token-2022-bugfix-review
+- https://solana.com/docs/tokens/extensions/non-transferrable-tokens
+
+---
+
+## [T22-W4] TransferHook Account Injection via Unvalidated ExtraAccountMetaList Seeds
+
+**Severity**: High
+**Extension**: TransferHook
+**Source**: Neodyme blog + Zealynx Security 2026 audit guide
+
+**Description**: The TransferHook extension passes an `ExtraAccountMetaList` PDA containing additional accounts the hook program reads during execution. If the hook program does not strictly validate the PDA derivation seeds, an attacker can craft a spoofed `ExtraAccountMetaList` that substitutes controlled accounts (e.g., a fake whitelist, a fake oracle) for the legitimate ones. The hook then reads attacker-controlled state and may approve transfers that should be blocked.
+
+**Three required validations a hook program must perform**:
+1. Verify the mint is whitelisted/expected — reject calls from unknown mints.
+2. Check the `transferring` flag is set to `true` on the source and destination token accounts — prevents calling the hook directly outside of an actual transfer context.
+3. Verify all token accounts passed actually belong to the called mint — prevents cross-mint account spoofing.
+
+**References**:
+- https://neodyme.io/en/blog/token-2022/
+- https://www.zealynx.io/blogs/solana-2026-security
+
+---
+
+## [T22-W5] TransferHook Infinite Recursion / CPI Depth Exhaustion
+
+**Severity**: Medium (DoS)
+**Extension**: TransferHook
+**Source**: Zealynx Security 2026 audit guide
+
+**Description**: If a TransferHook program triggers a CPI that initiates another transfer of the same mint, a recursion loop begins. Solana's runtime halts execution when CPI depth (max 4 levels) is exhausted, causing the entire transaction to fail. An attacker who controls or influences the hook's CPI call chain can grief any vault or AMM that interacts with that mint by making every transfer revert.
+
+**Composability impact**: Deep transfer hook chains (hook -> CPI -> hook -> CPI) break DeFi protocols that compose multiple token operations in a single transaction, even if neither protocol is directly responsible for the hook.
+
+**References**:
+- https://www.zealynx.io/blogs/solana-2026-security
+
+---
+
+## [T22-W6] PermanentDelegate Drains Protocol Vault Without Authorization
+
+**Severity**: Critical
+**Extension**: PermanentDelegate
+**Source**: Neodyme blog + active exploit pattern documented 2026
+
+**Description**: The PermanentDelegate extension grants a designated authority unconditional power to transfer or burn tokens from *any* token account of that mint without the account owner's signature. A protocol vault holding tokens of a PermanentDelegate mint can be drained at any time by the delegate, bypassing all protocol-level access controls.
+
+**Observed real-world pattern (2026)**: Malicious token deployers set the PermanentDelegate to the deployer wallet, create liquidity pools, generate fake volume, and then call `Burn` on buyer token accounts within 1-60 seconds of purchase.
+
+**Protocol risk**: An AMM, lending protocol, or yield vault accepting user-supplied mint addresses must check whether PermanentDelegate is set, assess trust in that authority, and either reject such mints or account for unexpected balance reductions in all invariant checks.
+
+**References**:
+- https://neodyme.io/en/blog/token-2022/
+- https://dev.to/ohmygod/solanas-permanent-delegate-burn-scam-how-token-2022-extensions-power-2026s-largest-automated-rug-4579
+
+---
+
+## [T22-W7] DefaultAccountState Freezes Newly Created Vaults, Blocking Protocol Operations
+
+**Severity**: High
+**Extension**: DefaultAccountState
+**Source**: Neodyme blog
+
+**Description**: When a mint has DefaultAccountState set to `Frozen`, every newly initialized token account for that mint starts in the frozen state and cannot send or receive tokens until explicitly thawed by the freeze authority. If a protocol creates a vault or escrow token account for such a mint during deposit or initialization logic — without checking for DefaultAccountState or calling `ThawAccount` — the account is created frozen and all subsequent transfers into or out of it revert. This can lock deposited funds or halt protocol operations entirely depending on whether the freeze authority is accessible.
+
+**References**:
+- https://neodyme.io/en/blog/token-2022/
+
+---
+
+## [T22-W8] MintCloseAuthority + Mint Reinitialization Bypasses Transfer Fees on Pre-Existing Accounts
+
+**Severity**: High
+**Extension**: MintCloseAuthority + TransferFeeConfig
+**Source**: Neodyme blog
+
+**Description**: Mints with MintCloseAuthority can be closed when supply reaches zero. A coordinated group can: (1) create a mint without extensions, (2) set up token accounts for themselves, (3) drain supply to zero, (4) close the mint, (5) reinitialize the mint with TransferFeeConfig. Because the fee extension check inspects the *source token account's* extension data (not just the mint), the pre-existing token accounts created before the extension was added do not carry the fee extension record and transfers from them avoid fee collection. The same technique can bypass NonTransferable or other per-account extension requirements.
+
+**References**:
+- https://neodyme.io/en/blog/token-2022/
+
+---
+
+## [T22-W9] ZK ElGamal Fiat-Shamir Flaw Allows Forged Confidential Transfer Proofs (Unlimited Mint)
+
+**Severity**: Critical
+**Extension**: ConfidentialTransfer
+**Source**: Anza/Solana Foundation post-mortem, April 2025 (patched before exploitation)
+
+**Description**: The ZK ElGamal Proof program — which verifies zero-knowledge proofs used in ConfidentialTransfer — contained missing algebraic components in the Fiat-Shamir transformation used for cryptographic randomness. The flaw allowed an attacker to craft forged proofs that the verifier accepted as valid. A successful exploit would have allowed minting arbitrary amounts of any Token-2022 token using the ConfidentialTransfer extension and draining user accounts. The vulnerability was disclosed April 16 2025, patched privately to validators April 17, and a supermajority of validators adopted the fix by April 18. No exploitation occurred.
+
+**Audit implication**: Any protocol that accepts ConfidentialTransfer-enabled mints and relies on on-chain ZK proof verification for balance correctness is exposed to proof-forgery attacks if the underlying proof program has soundness gaps. This class of bug requires formal verification, not just functional testing.
+
+**References**:
+- https://solana.com/news/post-mortem-june-25-2025
+- https://www.theblock.co/post/353055/solana-validators-patch-zero-day-bug-that-could-have-led-to-unlimited-minting-of-certain-tokens
+- https://cryptoslate.com/solana-averts-catastrophe-with-quiet-patch-of-major-token-vulnerability/
+
+---
+
+## [T22-W10] Insufficient Account Space for Token-2022 Mints Causes Initialization Failure
+
+**Severity**: Medium (DoS / integration failure)
+**Extension**: Any extension (variable-length mint accounts)
+**Source**: Local CSV candidate (row_index 919) — OtterSec finding on Raydium staking
+
+**Description**: Token-2022 mint accounts are larger than standard SPL Token mint accounts because extension data is appended inline. A protocol that hard-codes 165 bytes (the standard Token mint size) when allocating a new token account for a Token-2022 mint will cause `initialize_account3` to fail. In the Raydium staking context, `stake_clmm_position` allocated exactly 165 bytes for the vault token account of a Raydium position mint, preventing all users from staking their positions and blocking the farming pool.
+
+**Fix pattern**: Compute required space dynamically using `ExtensionType::get_account_len` (or equivalent) based on the mint's actual extension list before allocating the account, not a compile-time constant.
+
+**References**:
+- Local CSV row_index 919 (Solana / HIGH)
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

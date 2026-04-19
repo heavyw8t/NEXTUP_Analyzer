@@ -243,6 +243,150 @@ For each GAP found:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+# aptos/flash-loan-interaction
+# Generated: 2026-04-19
+# Sources: Aptos docs, Zellic research, CertiK blog, Solodit local CSV (4 hits), web search
+
+---
+
+## Local CSV Findings (4 hits)
+
+### CSV-1
+- **Severity**: HIGH
+- **Language**: Move (Initia)
+- **Tags**: flash_loan, oracle, spot_price
+- **Summary**: `usernames` module in Initia Move uses spot price from the Dex module for domain registration/extension pricing. An attacker can flash-borrow or make a large deposit to move the spot price, buying domains below market rate or forcing other users to overpay. Mitigation: TWAP or Slinky oracle.
+- **Solodit row**: 1804
+- **Skill tags**: `flash_loan`, `oracle_manipulation`, `borrow_repay`
+
+### CSV-2
+- **Severity**: HIGH
+- **Language**: Move (Unstoppable-DeFi / Vyper, cross-tagged Move)
+- **Tags**: flash_loan, sandwich, slippage
+- **Summary**: Attacker calls `MarginDex` to open/close positions in Vault, sets infinite slippage, and sandwich-attacks the internal swap inside a flash loan callback, draining swapped tokens. No `_is_liquidatable` check at position end and no oracle deviation guard on `close_position`.
+- **Solodit row**: 11081
+- **Skill tags**: `flash_loan`, `borrow_repay`, `atomic`
+
+### CSV-3
+- **Severity**: HIGH
+- **Language**: Move (Arrakis/UniV3 cross-tagged)
+- **Tags**: flash_loan, price_deviation_bypass, operator
+- **Summary**: Operator bypasses price deviation check during rebalance by routing a swap through a whitelisted router on an unrelated pool they control, then backruns inside a flash loan callback to drain the vault. Fix: enforce price deviation check immediately before liquidity provision.
+- **Solodit row**: 11230
+- **Skill tags**: `flash_loan`, `borrow_repay`, `atomic`
+
+### CSV-4
+- **Severity**: HIGH
+- **Language**: Move (Thala THL rewards)
+- **Tags**: flash_loan, staking, reward_calculation
+- **Summary**: Attacker flash-borrows THL tokens, increases stake amount to inflate the extra-rewards accumulator, claims rewards for the freshly added stake, then repays the flash loan in the same transaction. Root cause: accumulator for extra rewards is not updated before the stake amount changes. Fixed in patch.
+- **Solodit row**: 11639
+- **Skill tags**: `flash_loan`, `hot_potato`, `borrow_repay`, `atomic`
+
+---
+
+## Web-Sourced Findings (6 additional)
+
+### WEB-1 — FlashLoanReceipt with `drop` ability allows repayment bypass
+- **Severity**: CRITICAL
+- **Source**: Aptos Move Security Guidelines (aptos.dev/build/smart-contracts/move-security-guidelines)
+- **Tags**: `hot_potato`, `resource_release`, `flash_loan`
+- **Description**: If a `FlashLoan` or `FlashLoanReceipt` struct is declared with the `drop` ability, a borrower can destroy the receipt resource before calling `repay()`, exiting the loan without returning funds. The hot-potato invariant ("no abilities" struct that cannot be stored, copied, or dropped) is the sole enforcement mechanism for same-transaction repayment in Aptos Move. Adding `drop` nullifies that guarantee.
+- **Attack sequence**:
+  1. Call `flash_loan<T>(amount)` — receive `FlashLoanReceipt { amount, fee }`
+  2. Use borrowed funds.
+  3. Discard (drop) the receipt rather than passing it to `repay()`.
+  4. Transaction completes; protocol never receives repayment.
+- **Impact**: Full loss of loaned pool reserves.
+- **Remediation**: Declare FlashLoanReceipt/FlashLoan struct with zero abilities. Compiler enforces that the value must be consumed.
+- **Skill tags**: `hot_potato`, `resource_release`, `flash_loan`
+
+### WEB-2 — repay_flash_loan missing coin-type match check
+- **Severity**: HIGH
+- **Source**: Aptos Move Security Guidelines (aptos.dev/build/smart-contracts/move-security-guidelines)
+- **Tags**: `flash_loan`, `borrow_repay`, `type_confusion`
+- **Description**: `repay_flash_loan<T>` validates only that `coin::value(repayment) >= receipt.amount + fee`. It does not verify that the generic type `T` of the repayment coin matches the type `T` originally borrowed. An attacker borrows a high-value coin and repays with a different coin of equal nominal integer value but far lower market value.
+- **Attack sequence**:
+  1. `flash_loan<WBTC>(amount)` — receipt records `amount_in_wbtc`.
+  2. Keep WBTC. Acquire equivalent integer units of a near-zero-value token (e.g., a dust token where 1 unit = $0.000001).
+  3. Call `repay_flash_loan<DustToken>(receipt, dust_coin)` — integer assert passes, type is never checked.
+  4. Protocol receives worthless dust; attacker retains WBTC.
+- **Impact**: Complete theft of flash-loaned principal.
+- **Remediation**: Use phantom type parameters or `assert!(type_info::type_of<T>() == receipt.coin_type)` inside repay.
+- **Skill tags**: `flash_loan`, `borrow_repay`, `type_confusion`
+
+### WEB-3 — Move bytecode verifier CFG bug bypasses hot-potato (Zellic / CVE-class)
+- **Severity**: CRITICAL
+- **Source**: Zellic "The Billion Dollar Bug" (zellic.io/blog/the-billion-dollar-move-bug/); patched Aptos April 10 2023
+- **Tags**: `hot_potato`, `resource_release`, `flash_loan`
+- **Description**: A bug in `Bytecode::get_successors` produced an incorrect control-flow graph in the Move bytecode verifier, allowing a crafted bytecode sequence to (a) obtain multiple mutable references to one object, (b) retain a mutable reference to a moved object, and (c) drop an object that lacks the `drop` ability. Effect (c) directly breaks the hot-potato pattern: an attacker could take a flash loan receipt (no abilities) and drop it without repaying, bypassing ALL flash loan implementations on Aptos, Sui, Starcoin, and 0L. Introduced 2022-10-06, silently patched Aptos 2023-04-10.
+- **Impact**: Systematic theft of every flash-loan pool on Aptos during the window (Oct 2022 – Apr 2023).
+- **Remediation**: Upgrade to Aptos node >= April 2023 release. Application-level: no workaround possible — VM-level fix required.
+- **Skill tags**: `hot_potato`, `resource_release`, `flash_loan`
+
+### WEB-4 — Flash-loan-amplified spot-price oracle manipulation (Aptos AMM protocols)
+- **Severity**: HIGH
+- **Source**: Aptos Move Security Guidelines; Pontem "All About DeFi Flash Loans" (pontem.network); general Aptos DeFi audit pattern
+- **Tags**: `flash_loan`, `oracle_manipulation`, `atomic`
+- **Description**: Protocols that derive token price from the instantaneous reserve ratio of an Aptos AMM pool (xy=k, weighted, or stableswap) are vulnerable. An attacker flash-borrows a large amount of one token, trades it into the pool to shift reserves and spot price, calls the victim protocol function that reads the spot price (e.g., for collateral valuation, liquidation threshold, or minting ratio), extracts value, reverses the trade, and repays the flash loan — all within one transaction.
+- **Attack sequence**:
+  1. Flash-borrow large amount of TokenA from Echelon/Thala.
+  2. Swap TokenA → TokenB on AMM pool, driving spot price of TokenB up (or down).
+  3. Call victim protocol (e.g., mint stablecoin against inflated TokenB collateral, or liquidate undercollateralized position).
+  4. Swap TokenB → TokenA to restore pool.
+  5. Repay flash loan + fee.
+- **Impact**: Unbounded value extraction proportional to protocol TVL and AMM pool depth.
+- **Remediation**: Use TWAP (minimum 30-minute window), Pyth Network, or Switchboard oracle instead of spot reserves.
+- **Skill tags**: `flash_loan`, `oracle_manipulation`, `atomic`, `borrow_repay`
+
+### WEB-5 — Flash-stake to inflate reward accumulator before snapshot (Aptos staking/lending)
+- **Severity**: HIGH
+- **Source**: Solodit CSV-4 (Thala, row 11639) + Aptos DeFi staking pattern; corroborated by general Move audit precedents
+- **Tags**: `flash_loan`, `hot_potato`, `borrow_repay`, `atomic`
+- **Description**: Reward protocols that snapshot or accumulate rewards at the time of a stake/deposit call (rather than lazily on withdrawal) allow flash-staking: attacker borrows governance or staking tokens, calls `stake()` with a large amount to cause the accumulator to record a large share, immediately calls `claim_rewards()` in the same transaction, then calls `unstake()` and repays the flash loan. Net effect: attacker earns rewards for stake they held for zero real time.
+- **Conditions**: (a) staking token is flash-borrowable (Thala LP tokens, protocol tokens with flash-loan providers); (b) rewards are credited at stake time rather than time-weighted; (c) no cooldown or lockup enforced before `claim`.
+- **Impact**: Drain of reward reserve proportional to per-epoch reward budget and flash-loan-accessible stake supply.
+- **Remediation**: Credit rewards lazily on withdrawal only, or enforce a minimum lock period (multiple epochs) before claim is permitted.
+- **Skill tags**: `flash_loan`, `hot_potato`, `borrow_repay`, `atomic`
+
+### WEB-6 — Flash-loan fee rounds to zero enabling free capital (Aptos lending protocols)
+- **Severity**: MEDIUM
+- **Source**: Aptos Move Security Guidelines (fee precision pattern); CertiK Aptos audit lessons
+- **Tags**: `flash_loan`, `borrow_repay`, `precision_loss`
+- **Description**: When the flash loan fee is computed as `amount * PROTOCOL_FEE_BPS / 10000` using integer arithmetic in Move (u64/u128), borrowing an amount below `10000 / PROTOCOL_FEE_BPS` causes the fee to truncate to zero. For a 5 bps fee, this threshold is 2000 units of the base denomination. An attacker can make many small flash-loan calls, each returning the principal without paying any fee, effectively using the protocol as free capital — removing the economic disincentive and potentially enabling repeated attack probes at zero cost.
+- **Attack sequence**:
+  1. Choose `amount = floor(10000 / PROTOCOL_FEE_BPS) - 1` (e.g., 1999 for 5 bps).
+  2. `flash_loan<T>(1999)` — fee = `1999 * 5 / 10000 = 0`.
+  3. Perform arbitrage or manipulation with free capital; repay exactly `1999`.
+  4. Repeat in separate transactions.
+- **Impact**: Protocol earns no fees; attacker has costless flash capital; potential enabler for other attacks.
+- **Remediation**: Add minimum borrow amount check: `assert!(amount >= 10000 / PROTOCOL_FEE_BPS, EAMOUNT_TOO_SMALL)`.
+- **Skill tags**: `flash_loan`, `borrow_repay`, `precision_loss`
+
+---
+
+## Skill Tag Coverage Summary
+
+| Tag | CSV hits | Web hits | Total |
+|-----|----------|----------|-------|
+| `flash_loan` | 4 | 6 | 10 |
+| `hot_potato` | 1 | 3 | 4 |
+| `borrow_repay` | 3 | 5 | 8 |
+| `resource_release` | 0 | 2 | 2 |
+| `atomic` | 2 | 3 | 5 |
+| `oracle_manipulation` | 1 | 2 | 3 |
+| `precision_loss` | 0 | 1 | 1 |
+| `type_confusion` | 0 | 1 | 1 |
+
+Total unique findings: **10** (4 CSV + 6 web)
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

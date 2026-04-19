@@ -272,6 +272,255 @@ For each oracle, model failure scenarios:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+Sourced via WebSearch (April 2026). Maps to SKILL.md tags: oracle, pyth, switchboard, staleness, price_update_cap, multi-source, decimal, failure_modes.
+
+---
+
+## WEB-OR-01: Pyth `get_price_unsafe` used instead of `get_price_no_older_than`
+
+- Severity: HIGH
+- Protocol: Bluefin (Sui perpetual DEX)
+- Source: MoveBit audit blog, Hackenproof audit contest (Feb 2024)
+- Tags: oracle, pyth, staleness
+
+### Description
+
+Bluefin's `perpetual.update_oracle_price` called `pyth::get_price_unsafe` to fetch prices used in `trade`, `liquidate`, and `deleverage`. Pyth's documentation explicitly marks this function as returning a price that is not guaranteed to be current. Any delay between the last price-update transaction and the call to `get_price_unsafe` causes the protocol to act on an outdated price.
+
+### Impact
+
+Stale prices used in liquidation and position sizing. During volatile markets the lag between keeper updates and protocol reads can be minutes; positions may be liquidated at incorrect marks or new positions opened at stale collateral values.
+
+### Correct Pattern
+
+```move
+// use get_price_no_older_than instead
+let price = pyth::get_price_no_older_than(
+    price_info_object,
+    clock,
+    MAX_STALENESS_SECONDS
+);
+```
+
+### Reference
+
+https://www.movebit.xyz/blog/post/Bluefin-vulnerabilities-explanation-1.html
+
+---
+
+## WEB-OR-02: Zero-price not rejected from Pyth feed
+
+- Severity: HIGH
+- Protocol: Bluefin (Sui perpetual DEX)
+- Source: MoveBit audit blog (Feb 2024)
+- Tags: oracle, pyth, failure_modes
+
+### Description
+
+After calling `pyth::get_price_unsafe`, Bluefin validated the sign of the price with `get_magnitude_if_positive` but did not check whether the returned price was zero. Pyth can return `price = 0` during certain feed outage conditions. A zero price would pass the non-negative check and propagate into PnL, margin, and liquidation calculations.
+
+### Impact
+
+Protocol-wide mispricing at zero. Any position evaluated against a zero oracle price produces infinite or zero margin ratios depending on the direction of the division, enabling unlimited borrows or blocking all liquidations.
+
+### Correct Pattern
+
+```move
+let price = pyth::get_price_no_older_than(price_info_object, clock, MAX_STALENESS_SECONDS);
+let price_val = price::get_price(&price);
+assert!(price_val > 0, E_ZERO_PRICE);
+```
+
+### Reference
+
+https://www.movebit.xyz/blog/post/Bluefin-vulnerabilities-explanation-1.html
+
+---
+
+## WEB-OR-03: `clock::timestamp_ms` vs Pyth `publish_time` unit mismatch causes 1000x staleness tolerance
+
+- Severity: HIGH
+- Protocol: Generic Sui Move pattern (documented in Monethic security workshop)
+- Source: Monethic.io Sui Move Security Workshop writeup; Sui Move security community
+- Tags: oracle, pyth, staleness
+
+### Description
+
+`clock::timestamp_ms(clock)` on Sui returns milliseconds. Pyth's `price::get_timestamp` returns seconds. Protocols that compare these values directly without unit conversion produce a staleness check that is 1000x too lenient: a `MAX_STALENESS = 60` constant intended to mean 60 seconds is effectively treated as 60,000 seconds (16.7 hours).
+
+Variant: a protocol that stores `clock::timestamp_ms` in a field named `seconds`, then later divides by 1000 before comparing to a `MAX_STALENESS_SECONDS` constant that is actually in milliseconds, produces the inverse 1000x error (checks fail immediately or allow zero elapsed time).
+
+### Impact
+
+Intended freshness window is negated. Prices that are hours old are accepted as fresh. In lending protocols this enables borrowing against stale collateral prices; in perpetuals it enables trading at stale marks.
+
+### Correct Pattern
+
+```move
+let publish_time_s = price::get_timestamp(&current_price); // seconds (Pyth)
+let now_s = clock::timestamp_ms(clock) / 1000;             // convert ms -> s
+assert!(now_s - publish_time_s <= MAX_STALENESS_SECONDS, E_STALE_PRICE);
+```
+
+### Reference
+
+https://medium.com/@monethic/sui-move-security-workshop-writeup-material-480c5e7d1da3
+
+---
+
+## WEB-OR-04: Pyth confidence interval not validated, allowing high-uncertainty prices
+
+- Severity: MEDIUM
+- Protocol: Generic (confirmed in multiple Sherlock contests for EVM; directly applicable to Sui Move Pyth integrations)
+- Source: Sherlock 2024-10 Debita judging (issues #548, #825); Pyth best-practices documentation
+- Tags: oracle, pyth, failure_modes
+
+### Description
+
+Protocols that call `pyth::get_price` (or `get_price_no_older_than`) but never read `price::get_conf` accept prices regardless of Pyth's stated confidence interval. During low-liquidity or high-volatility events Pyth reports a wide `conf` value indicating the price is uncertain. Using such prices for liquidation thresholds or LTV calculations without a confidence check can cause premature or blocked liquidations.
+
+Pyth's own best-practices documentation recommends clamping the usable price to `price +/- conf` or rejecting prices where `conf / price > threshold`.
+
+### Impact
+
+Premature liquidations in lending protocols (if confidence-wide price is treated as mid), or inability to liquidate undercollateralised positions (if price appears high but confidence is enormous).
+
+### Correct Pattern
+
+```move
+let conf = price::get_conf(&current_price);
+let price_val = price::get_price(&current_price) as u64;
+// Reject if confidence > 1% of price
+assert!(conf * 100 <= price_val, E_PRICE_UNCERTAIN);
+```
+
+### References
+
+- https://github.com/sherlock-audit/2024-10-debita-judging/issues/548
+- https://github.com/sherlock-audit/2024-10-debita-judging/issues/825
+- https://docs.pyth.network/price-feeds/core/best-practices
+
+---
+
+## WEB-OR-05: Centralized oracle fallback with insufficient key security and no circuit breaker
+
+- Severity: MEDIUM
+- Protocol: Navi Protocol (Sui lending)
+- Source: Veridise formal audit VAR_Navi-240607-Decentralized_Oracle_Integration (June 2024)
+- Tags: oracle, multi-source, price_update_cap
+
+### Description
+
+Navi's decentralized oracle aggregates Pyth and Supra as primary sources. When both decentralized sources are unavailable it falls back to a centralized oracle controlled by an admin key. Veridise's audit identified that (1) the key-storage mechanism's security was not formally verified, (2) no minimum number of key custodians was enforced, and (3) there was no on-chain circuit breaker that would prevent the centralized fallback from being used indefinitely if the primary sources recovered but the fallback was never reverted.
+
+An operator or compromised key holder could feed arbitrary prices through the fallback path without the on-chain protocol detecting the abuse.
+
+### Impact
+
+Full price oracle control by a single key. In a lending context this means arbitrary liquidations or under-collateralised borrows against any asset priced through the fallback feed.
+
+### Reference
+
+https://veridise.com/wp-content/uploads/2024/11/VAR_Navi-240607-Decentralized_Oracle_Integration.pdf
+
+---
+
+## WEB-OR-06: Single low-TVL AMM pool used as price reference, manipulable via flash swap
+
+- Severity: HIGH
+- Protocol: f(x) Protocol (Move-based; analogous pattern confirmed in Initia Move username pricing)
+- Source: Solodit/Sherlock local CSV row_index 846 (f(x)) and row_index 1804 (Initia Move)
+- Tags: oracle, staleness, multi-source
+
+### Description
+
+The f(x) Protocol oracle system compares spot prices from multiple on-chain pools against an anchor price. A pool with low TVL was included in the aggregation set. An attacker could manipulate the low-TVL pool's spot price in a single transaction to skew the aggregate, causing the system to use the manipulated price instead of the anchor.
+
+The Initia Move variant showed the same root cause: the `usernames` module read a spot price directly from the Dex module, which was manipulable with a flash loan or large deposit. The fix in both cases was to use a TWAP or external oracle for pricing decisions.
+
+### Impact
+
+Collateral mispriced relative to anchor. In f(x): potential losses for depositors when manipulated collateral price inflates available borrows. In Initia: domain registrations purchasable below market rate by the attacker, with other users forced to pay inflated prices.
+
+### Reference
+
+Solodit local CSV rows 846 and 1804 (Move language, HIGH severity).
+
+---
+
+## WEB-OR-07: CLMM pool price used as oracle; arithmetic overflow in liquidity math corrupts price accounting
+
+- Severity: CRITICAL
+- Protocol: Cetus Protocol (Sui CLMM DEX, $223M exploit May 2025)
+- Source: Cyfrin, Dedaub, Halborn, QuillAudits post-mortems
+- Tags: oracle, switchboard (CLMM internal), price_update_cap, failure_modes
+
+### Description
+
+Cetus Protocol computed token deltas for add-liquidity using `checked_shlw` in `clmm_math.move`. The overflow guard compared the input `n` against `0xFFFFFFFFFFFFFFFF << 192` (a value well above the actual overflow threshold) rather than `0x1 << 192`. This allowed values that would overflow on a left-shift-by-64 to pass the check. The result was that an attacker could add minimal real tokens while the protocol recorded a very large liquidity credit. Withdrawing against that inflated credit drained real reserves.
+
+The CLMM pool's internal price feed, derived from this corrupted liquidity math, then became the oracle price used by downstream protocols (including Scallop and other Sui lending protocols that paused post-exploit).
+
+### Correct Fix
+
+```move
+// Vulnerable
+let mask = 0xffffffffffffffff << 192;
+if (n > mask) { abort }
+// Fixed
+let mask = 1 << 192;
+if (n >= mask) { abort }
+```
+
+### Impact
+
+$223M drained. Corrupted internal price propagated to ~15 dependent Sui DeFi protocols that paused operations.
+
+### References
+
+- https://www.cyfrin.io/blog/inside-the-223m-cetus-exploit-root-cause-and-impact-analysis
+- https://dedaub.com/blog/the-cetus-amm-200m-hack-how-a-flawed-overflow-check-led-to-catastrophic-loss/
+- https://www.halborn.com/blog/post/explained-the-cetus-hack-may-2025
+
+---
+
+## WEB-OR-08: Pyth `PriceInfoObject` not updated in same PTB; protocol relies on keeper freshness with no enforcement
+
+- Severity: MEDIUM
+- Protocol: Generic Sui Move pattern; documented in academic study of Sui shared objects (2406.15002)
+- Source: arxiv 2406.15002 (Shared Objects in Sui); Pyth Sui integration docs
+- Tags: oracle, pyth, price_update_cap, staleness
+
+### Description
+
+Pyth on Sui requires an explicit `pyth::update_price_feeds` call in each PTB before downstream price reads. Protocols that read `PriceInfoObject` without calling the update in the same PTB rely on external keepers to have run the update in a prior transaction. The study of shared objects on Sui found 83 `PriceInfoObject` instances accounting for 38.9% of all shared-object transactions, with most being mutable (indicating update contention). During periods of keeper lag or network congestion, the `PriceInfoObject` is not updated and `get_price_no_older_than` aborts, or `get_price_unsafe` returns a stale value.
+
+If the protocol does not use `get_price_no_older_than` and also does not call the update itself, the stale-price window is bounded only by keeper liveness, which is not an on-chain guarantee.
+
+### Impact
+
+Protocol reads prices that are arbitrarily old when keepers lag. Impact is identical to WEB-OR-01 but the root cause is architectural (no PTB update) rather than a function-selection error.
+
+### Correct Pattern
+
+```move
+// In the same PTB: call update_price_feeds first, then read
+pyth::update_price_feeds(pyth_state, price_info_objects, vaas, clock);
+let price = pyth::get_price_no_older_than(price_info_object, clock, MAX_STALENESS_SECONDS);
+```
+
+### References
+
+- https://arxiv.org/html/2406.15002v1
+- https://docs.pyth.network/price-feeds/core/use-real-time-data/pull-integration/sui
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

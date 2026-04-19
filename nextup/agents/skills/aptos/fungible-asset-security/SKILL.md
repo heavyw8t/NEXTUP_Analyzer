@@ -232,6 +232,246 @@ If the protocol handles both `Coin<T>` and `FungibleAsset`:
 **Who Benefits**: [Who can use these]
 ```
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+Sources: OtterSec "Hitchhiker's Guide to Aptos Fungible Assets" (Feb 2025), Aptos Move Security Guidelines (2025), AIP-63 Coin-to-FA Migration docs.
+
+---
+
+## Example 1: Metadata Validation Bypass (Counterfeit Asset Acceptance)
+
+**Source**: OtterSec blog (2025-02-10)
+**Severity**: High
+**FA Component**: metadata
+**Attack Vector**: counterfeit deposit
+
+A function accepts a `FungibleAsset` parameter but only reads the amount, never calling `fungible_asset::metadata(&fa)` or comparing it against the expected metadata object. An attacker passes a zero-cost FA minted from their own metadata. The protocol credits the amount as if it were the legitimate token.
+
+```move
+// VULNERABLE
+public fun deposit(sender: &signer, fa: FungibleAsset) {
+    let fa_amount = fungible_asset::amount(&fa);
+    // no metadata check — accepts any FungibleAsset
+    increase_deposit(get_vault(signer::address_of(sender)), fa_amount);
+    fungible_asset::destroy_zero(fa); // only works if amount == 0
+}
+
+// SAFE
+public fun deposit(sender: &signer, fa: FungibleAsset) {
+    assert!(fungible_asset::metadata(&fa) == expected_metadata(), EWRONG_ASSET);
+    let fa_amount = fungible_asset::amount(&fa);
+    increase_deposit(get_vault(signer::address_of(sender)), fa_amount);
+    primary_fungible_store::deposit(vault_addr, fa);
+}
+```
+
+**Mapping**: SKILL.md STEP 1 (Metadata Validation Audit).
+
+---
+
+## Example 2: Zero-Value Asset State Manipulation
+
+**Source**: OtterSec blog (2025-02-10); confirmed by CSV row 3913 and 3914
+**Severity**: High (CSV: HIGH x2)
+**FA Component**: fa_store / accounting
+**Attack Vector**: zero-value deposit/withdrawal to corrupt counters or trigger state transitions
+
+`fungible_asset::zero(metadata)` and `dispatchable_fungible_asset::deposit` accept zero amounts. Protocols that gate logic on deposit events (investor registration, reward checkpoints, counter increments) can be triggered at zero cost.
+
+CSV finding (row 3913): A `ds_token` module increments `WithdrawCount` on every withdrawal including zero-value ones. An attacker calls withdraw with `amount=0` repeatedly, overflowing or inflating the counter until legitimate withdrawals abort.
+
+CSV finding (row 3914): A protocol tracks active investors by assuming zero-balance means exit. An attacker with a non-zero balance calls `withdraw(0)` then `deposit(0)`, causing the system to decrement the investor count, defeating accounting invariants.
+
+```move
+// PATTERN: missing zero-value guard
+public fun withdraw(store: Object<FungibleStore>, amount: u64): FungibleAsset {
+    // should assert!(amount > 0, EZERO_AMOUNT);
+    withdraw_count = withdraw_count + 1; // incremented even for amount=0
+    fungible_asset::withdraw(store, amount)
+}
+```
+
+**Mapping**: SKILL.md STEP 2 (Zero-Value Exploitation).
+
+---
+
+## Example 3: Permissionless Primary Store Creation Enables DoS
+
+**Source**: OtterSec blog (2025-02-10)
+**Severity**: Medium
+**FA Component**: fa_store / primary_fungible_store
+**Attack Vector**: front-run store creation to abort victim's registration
+
+`primary_fungible_store::ensure_primary_store_exists` is permissionless: any caller can create a primary store for any address + metadata pair. A protocol that calls `create_primary_store` (not `ensure_primary_store_exists`) in its registration function aborts when the store already exists. An attacker front-runs victim registration by pre-creating the store, permanently blocking the victim's ability to join the protocol.
+
+```move
+// VULNERABLE: aborts if store already exists
+public entry fun register(user: &signer, metadata: Object<Metadata>) {
+    let addr = signer::address_of(user);
+    let _store = primary_fungible_store::create_primary_store(addr, metadata);
+    // ^ aborts with ESTORE_ALREADY_EXISTS if attacker pre-created it
+}
+
+// SAFE
+public entry fun register(user: &signer, metadata: Object<Metadata>) {
+    let addr = signer::address_of(user);
+    primary_fungible_store::ensure_primary_store_exists(addr, metadata);
+}
+```
+
+**Mapping**: SKILL.md STEP 3a (Store Creation Inventory).
+
+---
+
+## Example 4: Deletable Metadata Object Breaks FA Stores
+
+**Source**: OtterSec blog (2025-02-10)
+**Severity**: High
+**FA Component**: metadata
+**Attack Vector**: metadata object deletion renders all FA stores inoperable
+
+`fungible_asset::add_fungibility` previously lacked an assertion that the metadata object was non-deletable. If the creator passed a `ConstructorRef` for a deletable object, they could later call `object::delete` on the metadata. After deletion, all `FungibleStore` objects for that metadata become permanently broken: new stores cannot be created, existing stores cannot be operated on, and the entire asset type is bricked.
+
+```move
+// FIX (added after discovery):
+public fun add_fungibility(
+    constructor_ref: &ConstructorRef,
+    ...
+) {
+    assert!(
+        !object::can_generate_delete_ref(constructor_ref),
+        error::invalid_argument(EOBJECT_IS_DELETABLE)
+    );
+    // ...
+}
+```
+
+**Mapping**: SKILL.md STEP 1 (metadata validation) and STEP 3a (store creation).
+
+---
+
+## Example 5: Transitive Object Ownership Grants Unintended Store Access
+
+**Source**: OtterSec blog (2025-02-10)
+**Severity**: Medium
+**FA Component**: FungibleStore ownership
+**Attack Vector**: indirect store withdrawal via ownership chain
+
+Aptos object ownership is transitive. If ObjectA owns ObjectB which owns a `FungibleStore`, the owner of ObjectA can withdraw from B's store because `object::owns(store, owner_of_A)` returns true. Protocols that create nested object hierarchies may unintentionally give parent-object owners access to child-object FA stores.
+
+```move
+// object::owns walks the chain:
+fun verify_ungated_and_descendant(owner: address, destination: address) {
+    // current_address walks up: destination -> parent -> grandparent
+    while (owner != current_address) {
+        current_address = object::owner(current_address);
+        // if owner appears anywhere in the chain, access is granted
+    }
+}
+```
+
+Any call to `fungible_asset::withdraw` that relies on `object::owns` for access control is reachable by any ancestor in the ownership chain, not just the direct owner.
+
+**Mapping**: SKILL.md STEP 3b (Transitive Ownership).
+
+---
+
+## Example 6: Dispatchable Hook DoS via Zero-Value Withdrawal Flag Stuck
+
+**Source**: OtterSec blog (2025-02-10)
+**Severity**: High
+**FA Component**: dispatchable hook
+**Attack Vector**: zero-value withdraw leaves reentrancy flag set, permanently blocking legitimate withdrawals
+
+A dispatchable FA implementation guards against simultaneous withdrawals with a boolean flag. The `withdraw` hook sets the flag to `true` before the transfer and `false` after. The implementation does not guard against zero-amount withdrawals. An attacker withdraws 0 tokens: the flag is set to `true`, `fungible_asset::withdraw_with_ref` is called with `amount=0`, returning a zero-value FA. The attacker calls `destroy_zero` on the returned asset without ever triggering the flag reset path, leaving the flag permanently set. All subsequent legitimate withdraw calls abort.
+
+```move
+public fun withdraw<T: key>(
+    store: Object<T>, amount: u64, transfer_ref: &TransferRef
+): FungibleAsset {
+    assert_withdraw_flag(false); // aborts if already true
+    set_withdraw_flag(true);
+    let fa = fungible_asset::withdraw_with_ref(transfer_ref, store, amount);
+    // amount==0 path: fa is zero-value, caller calls destroy_zero externally
+    // flag never reset if the zero-FA is handled outside this function
+    set_withdraw_flag(false); // only reached if this function fully executes
+    fa
+}
+```
+
+**Mapping**: SKILL.md STEP 4b (Reentrancy via Hooks) and STEP 2 (Zero-Value).
+
+---
+
+## Example 7: Coin-to-FA Migration Uses Current Supply as Max Supply Cap
+
+**Source**: OtterSec blog (2025-02-10)
+**Severity**: Medium
+**FA Component**: paired_coin migration / accounting
+**Attack Vector**: supply cap set to current circulating supply blocks future minting
+
+When the Aptos framework creates a paired `FungibleAsset` for a legacy `Coin<T>` via `coin::create_paired_metadata`, the code incorrectly set `maximum_supply` to the current outstanding coin supply rather than the original maximum supply (or no cap). Any mint call that would expand FA supply beyond the snapshot amount aborts with a supply-exceeded error, even if the original coin type had room to mint more tokens.
+
+```move
+// VULNERABLE pattern (pre-fix):
+let current_supply = coin::supply<CoinType>(); // e.g., 1_000_000
+fungible_asset::create_metadata_with_max_supply(
+    ...,
+    max_supply: current_supply, // WRONG: should be coin::maximum<CoinType>() or unlimited
+);
+```
+
+**Mapping**: SKILL.md STEP 6 (Coin-to-FA Migration Accounting).
+
+---
+
+## Example 8: mem::swap Allows FungibleAsset Substitution After Metadata Check
+
+**Source**: Aptos Move Security Guidelines (2025)
+**Severity**: High
+**FA Component**: metadata / FungibleAsset value
+**Attack Vector**: mutable reference passed to untrusted closure; attacker swaps legitimate FA for worthless one
+
+Since `mem::swap` is public in Move, any function that validates `FungibleAsset` metadata and then passes `&mut FungibleAsset` to an untrusted callback loses the validation guarantee. The attacker supplies a callback that swaps the validated asset with a zero-cost FA of different metadata. The code after the callback deposits the worthless asset, not the validated one.
+
+```move
+// VULNERABLE
+public fun do_with_fa(
+    user: address,
+    asset: FungibleAsset,
+    hook: |&mut FungibleAsset|
+) {
+    check_metadata(&asset);         // validates here
+    hook(&mut asset);               // attacker calls mem::swap inside hook
+    // asset is now a worthless FA — metadata check is stale
+    primary_fungible_store::deposit(@treasury, asset);
+}
+```
+
+Fix: either avoid passing `&mut FungibleAsset` to external code, or re-validate metadata after the callback returns.
+
+**Mapping**: SKILL.md STEP 1 (Metadata Validation Audit) — post-mutation re-validation.
+
+---
+
+## Coverage Summary
+
+| # | Finding | FA Component | SKILL.md Step | Severity |
+|---|---------|-------------|---------------|----------|
+| 1 | Metadata validation bypass | metadata | STEP 1 | High |
+| 2 | Zero-value state manipulation (CSV x2) | fa_store/accounting | STEP 2 | High |
+| 3 | Permissionless primary store DoS | primary_fungible_store | STEP 3a | Medium |
+| 4 | Deletable metadata bricks all stores | metadata | STEP 1 / STEP 3a | High |
+| 5 | Transitive ownership grants unintended store access | FungibleStore ownership | STEP 3b | Medium |
+| 6 | Dispatchable hook DoS via zero-value withdraw flag stuck | dispatchable hook | STEP 4b / STEP 2 | High |
+| 7 | Coin-to-FA migration sets wrong max supply cap | paired_coin migration | STEP 6 | Medium |
+| 8 | mem::swap substitutes FA after metadata check via mutable ref | metadata/FungibleAsset | STEP 1 | High |
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Step | Required | Completed? | Notes |

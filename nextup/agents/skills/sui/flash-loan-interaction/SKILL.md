@@ -269,6 +269,221 @@ For each GAP found:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+> Sourced from: Trail of Bits, Mirage Audits, SlowMist, Dedaub, Cyfrin, Halborn, QuillAudits, Cetus post-mortems, OtterSec/MoveBit/Zellic audit history, OWASP SC-Top-10 2025.
+> Local CSV contribution: 4 hits (candidates.jsonl rows 1804, 11081, 11230, 11639) — all are Move-language flash loan / spot price manipulation patterns.
+> Total findings below: 8
+
+---
+
+## FL-W01 — Hot Potato Receipt with `drop` Ability Enables Free Flash Loan
+
+**Severity**: Critical
+**Tags**: hot_potato, flash_loan, resource_release, borrow_repay
+**Source**: Mirage Audits — "The Ability Mistakes That Will Drain Your Sui Move Protocol" (2025); Trail of Bits — "How Sui Move Rethinks Flash Loan Security" (Sep 2025)
+
+**Pattern**: A `FlashLoanReceipt` struct that has the `drop` ability added (accidentally or through an incorrect diff review) can be silently discarded by the borrower. The Move compiler does not error on this — it simply allows the value to go out of scope. The hot potato enforcement that normally forces repayment is completely nullified. The protocol's flash loan becomes interest-free and repayment-optional.
+
+**Root cause**: `drop` on a receipt struct means the VM will automatically clean it up at the end of scope. The repay function is never forced to execute. There is no runtime guard that catches a missing consume call; the type system guarantee is the only enforcement layer, and it has been removed.
+
+**Attack PTB**:
+```
+1. BORROW: call flash_loan(pool, amount) -> (Coin<T>, FlashLoanReceipt)
+2. USE: spend Coin<T> arbitrarily (swap, deposit, extract)
+3. DROP: let FlashLoanReceipt { .. } = receipt;  // compiles; hot potato is gone
+   -- repay_flash_loan() is never called
+4. PROFIT: full borrowed amount kept; no fee paid
+```
+
+**Impact**: Complete protocol drain. Every flash loan becomes a free withdrawal.
+
+**Mitigation**: Receipt struct must have zero abilities. Auditors must check ability annotations before reading any implementation logic.
+
+**Real-world note**: Mirage Audits reports finding this pattern "multiple times" in production Sui protocol reviews.
+
+---
+
+## FL-W02 — Cetus AMM: Flash Loan + `checked_shlw` Overflow Drains $223M
+
+**Severity**: Critical
+**Tags**: flash_loan, atomic, hot_potato, borrow_repay
+**Source**: Dedaub post-mortem; SlowMist analysis; Cyfrin; Halborn; QuillAudits — all May 2025
+
+**Pattern**: The `checked_shlw` function in the `integer-mate` math library (used by Cetus CLMM) was implemented to test whether a left-shift by 64 bits would overflow by comparing the value to `0xFFFFFFFFFFFFFFFF << 192` instead of `0x1 << 192`. This accepted values that would still cause overflow, allowing the attacker to pass an artificially enormous liquidity parameter that produced a near-zero computed liquidity value.
+
+**Attack PTB**:
+```
+1. BORROW: flash loan 10,024,321 haSUI from flash loan provider
+2. MANIPULATE: open a 1-tick-wide LP position with crafted `delta_liquidity` parameter
+   -- checked_shlw overflow bypassed; computed liquidity = ~0
+   -- pool price drops 99.9% (18,956,530,795,606,879,104 -> 18,425,720,184,762,886)
+3. EXTRACT: swap tiny amounts for massive token output at distorted price
+4. REPAY: return flash loan
+5. PROFIT: ~$61M extracted (remaining ~$162M frozen by Sui validators)
+```
+
+**Impact**: $223M total exposure; $61M exfiltrated; $162M frozen via validator emergency governance.
+
+**Note**: Three prior audits (OtterSec, MoveBit, Zellic April 2025) did not flag the library function. The vulnerability was in an imported math library, not the core protocol logic — illustrating that dependency audit scope matters.
+
+**Mitigation**: Audit all imported math libraries; use formal verification for arithmetic helpers; test with boundary inputs near u128/u256 overflow points.
+
+---
+
+## FL-W03 — Spot Price Oracle Manipulation via Flash Loan (Move Domain Registration Pricing)
+
+**Severity**: High
+**Tags**: flash_loan, atomic, spot_price, oracle
+**Source**: Local CSV row 1804 — Initia Move platform; confirmed HIGH by Sherlock judge
+
+**Pattern**: The `usernames` module on Initia Move reads the spot price from a DEX module to compute domain registration and renewal fees. An attacker can flash-borrow from a lending pool, trade on the DEX to move the spot price in the same PTB, then register domains at a manipulated price. Other users are indirectly harmed because subsequent state reflects the distorted price until it corrects.
+
+**Attack PTB**:
+```
+1. BORROW: flash loan large Token A
+2. TRADE: swap on DEX to move spot price of Token A vs Token B
+3. CALL: usernames::register(domain) — fee computed from manipulated spot price
+4. EXTRACT: domain registered at fraction of true cost
+5. RESTORE: reverse trade (or accept slippage loss if still profitable)
+6. REPAY: return flash loan
+```
+
+**Impact**: Domains purchased at near-zero cost; honest users overpay when price is manipulated upward.
+
+**Mitigation**: Use TWAP oracle (Slinky or equivalent) instead of spot DEX price for fee calculations.
+
+---
+
+## FL-W04 — Flash-Stake Reward Extraction (Move Lending/Staking Protocol)
+
+**Severity**: High
+**Tags**: flash_loan, atomic, borrow_repay, hot_potato
+**Source**: Local CSV row 11639 — THL coin rewards system; confirmed HIGH
+
+**Pattern**: A staking protocol accumulates extra rewards per staked unit without snapshotting the staker's position at the time of staking. An attacker flash-borrows tokens, stakes them, immediately claims rewards credited to the inflated stake, then unstakes and repays the flash loan — all within one PTB.
+
+**Attack PTB**:
+```
+1. BORROW: flash loan large Token X
+2. STAKE: stake(Token X) — increases attacker's stake share
+3. CLAIM: claim_rewards() — rewards calculated on inflated stake
+4. UNSTAKE: unstake(Token X) — recover principal
+5. REPAY: return flash loan
+6. PROFIT: rewards from stake position held for 0 real time
+```
+
+**Root cause**: Reward accumulator for extra rewards is not updated before modifying stake amount. Staking increases the denominator without a corresponding snapshot, allowing retroactive reward capture.
+
+**Mitigation**: Update the extra-reward accumulator before every stake/unstake modification. Rewards accrued after a flash stake should not be claimable in the same epoch/transaction.
+
+---
+
+## FL-W05 — Flash Loan Receipt Not Tied to Pool Object ID (Cross-Pool Receipt Confusion)
+
+**Severity**: High
+**Tags**: hot_potato, flash_loan, borrow_repay, resource_release
+**Source**: Trail of Bits — "How Sui Move Rethinks Flash Loan Security" (Sep 2025); SlowMist Sui auditing primer
+
+**Pattern**: A flash loan receipt struct that does not encode the originating pool's `ID` can be repaid to a different pool. If two pools exist for Token A (e.g., different fee tiers), a borrower can borrow from the higher-liquidity pool and repay via the lower-liquidity pool, or repay the receipt with a coin sourced from a pool drain rather than actual repayment.
+
+**Vulnerable struct example**:
+```move
+struct FlashLoanReceipt {
+    amount: u64,
+    // MISSING: pool_id: ID
+}
+```
+
+**Attack**: Borrow from Pool A (deep liquidity), perform manipulation, repay Pool B's receipt (or use tokens drained from Pool B to satisfy Pool A's receipt) if the repay function only checks amount, not source.
+
+**Impact**: Cross-pool fund extraction; one pool effectively subsidizes repayment of another pool's loan.
+
+**Mitigation**: Receipt must include `pool_id: ID` (or `borrow_pool: address`). The `repay_flash_loan` function must assert `receipt.pool_id == object::id(pool)` before accepting repayment.
+
+---
+
+## FL-W06 — Vault Share Price Manipulation via Flash Deposit/Withdraw in Same PTB
+
+**Severity**: High
+**Tags**: flash_loan, atomic, vault_accounting, borrow_repay
+**Source**: SlowMist "Introduction to Auditing Sui Move Contracts"; Trail of Bits blog; general DeFi pattern confirmed across Move audits
+
+**Pattern**: A vault that computes exchange rate as `total_balance / total_shares` reads live balance state that can be transiently distorted within a PTB. An attacker flash-borrows a large amount, deposits it into the vault (inflating `total_balance` without proportional `total_shares` if there is rounding or first-depositor mechanics), withdraws at the inflated rate, and repays the flash loan.
+
+**Attack PTB**:
+```
+1. BORROW: flash loan large Token A
+2. DEPOSIT: deposit(Token A) -> shares minted at pre-inflation rate
+3. INFLATE: direct transfer or donation to vault balance (if accepted)
+   -- share price = (balance + donation) / shares; rises sharply
+4. REDEEM: redeem(shares) -> Token A output at inflated price
+5. REPAY: return flash loan
+6. PROFIT: redeem value > deposit value
+```
+
+**Sui-specific note**: On Sui, `transfer::public_transfer(coin, @pool_address)` creates a new owned object at that address rather than adding to the pool's `Balance<T>`. Protocols that do accept arbitrary coins via a `donate()` or `top_up()` function and then use `balance::value()` for rate computation are directly exposed.
+
+**Mitigation**: Compute exchange rate from a snapshotted value stored at the start of each function call, not live `balance::value()`. Alternatively, use virtual accounting (track total deposited separately from raw balance).
+
+---
+
+## FL-W07 — Flash Loan Enables Global Cooldown/Debounce Consumption (Permissionless DoS)
+
+**Severity**: Medium
+**Tags**: flash_loan, atomic, hot_potato, resource_release
+**Source**: SKILL.md Section 3b pattern; SlowMist Sui auditing primer flash loan section; general Sui PTB composition research
+
+**Pattern**: A shared object stores a global cooldown timestamp (`last_called: u64` using `clock::timestamp_ms`). A permissionless function (e.g., `trigger_epoch_rebase`, `settle_fees`, `update_oracle`) reads this timestamp and enforces a minimum interval. An attacker can flash-borrow (to meet any minimum capital requirement), call the gated function in the same PTB to consume the cooldown slot, then repay. This blocks all legitimate callers for the full cooldown duration.
+
+**Sui-specific**: Unlike per-user cooldowns (stored in user-owned objects), shared-object global cooldowns affect all callers simultaneously. The attacker spends only gas + flash loan fee to deny the function to every user for N seconds.
+
+**Conditions for exploitability**:
+- Cooldown is stored in a shared object (global, not per-user)
+- The gated function is permissionless (no capability check)
+- The function can be called with economically neutral parameters (amount=0, self-transfer, etc.)
+
+**Impact**: Protocol operations that depend on periodic execution (rebase, fee settlement, oracle updates) can be blocked repeatedly at low cost.
+
+**Mitigation**: Use per-user cooldowns stored in user-owned objects, or gate the function with a capability that limits who can trigger it.
+
+---
+
+## FL-W08 — Defense Parity Gap: Undefended Module Path Bypasses Flash Loan Guard
+
+**Severity**: Medium
+**Tags**: flash_loan, atomic, borrow_repay, hot_potato
+**Source**: SKILL.md Section 6b pattern; SlowMist auditing methodology; general Sui multi-module audit pattern
+
+**Pattern**: A protocol implements Module A with a cooldown or epoch-check guard to prevent flash-stake-claim-withdraw. Module B provides the same economic action (stake/withdraw) but was added later and omits the guard. Attackers use Module B as the undefended entry point, making Module A's protection meaningless.
+
+**Concrete example**:
+- `staking_v1::stake()` — has epoch guard, prevents flash stake
+- `staking_v2::stake()` — no guard (guard was "to be added later")
+- Attacker uses `staking_v2` to flash-stake, claim rewards, flash-unstake
+
+**Root cause**: Defense is applied per-implementation rather than per-economic-action. Multi-module protocols frequently have parity gaps after incremental development.
+
+**Detection**: For every flash-relevant action (stake, deposit, borrow, withdraw, claim), enumerate ALL modules that expose that action. Compare their defenses line-by-line.
+
+**Mitigation**: Extract flash loan guards into shared library functions and require all entry points for the same economic action to call the same guard.
+
+---
+
+## CSV Source Mapping
+
+| CSV Row | Summary Tag | Mapped to Finding |
+|---------|-------------|-------------------|
+| 1804 | Initia Move spot price manipulation via flash loan for domain pricing | FL-W03 |
+| 11081 | Unstoppable-DeFi sandwich via flash loan callback in margin vault | General pattern; informs FL-W06 |
+| 11230 | Arrakis vault operator drains via flash loan callback + unrelated pool swap | General pattern; informs FL-W06 |
+| 11639 | THL extra-reward flash stake exploit (accumulator not updated before stake) | FL-W04 |
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

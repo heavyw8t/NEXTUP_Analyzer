@@ -249,6 +249,194 @@ For each oracle, model failure scenarios:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+> Source: WebSearch pass (April 2026). 7 findings across Aptos/Move oracle patterns.
+> Tags used: oracle, pyth, switchboard, staleness, price_deviation, zero_price, confidence, spot_price_manipulation, decimal
+
+---
+
+## WE-OR-01
+
+**Title**: Missing Pyth price staleness check allows stale prices to affect collateral valuations
+**Severity**: HIGH
+**Tags**: oracle, pyth, staleness
+**Protocol/Platform**: Generic Aptos lending (Pyth integration pattern)
+**Source**: Pyth Best Practices docs + Aptos Move Security Guidelines; corroborated by multiple Aptos audit firms (MoveBit, Zellic)
+
+**Pattern**: Protocol calls `pyth::get_price()` (or the unsafe variant) without comparing `price.publish_time` against `timestamp::now_seconds()`. No maximum staleness threshold enforced. Stale price feeds can persist during oracle downtime or network congestion.
+
+**Attack / Failure Path**:
+1. Pyth price feed goes stale (feed publisher offline, network congestion, or targeted DoS).
+2. Protocol continues reading `price.price` from the last published `PriceFeed` resource.
+3. If the last published price differs materially from current market (e.g., 30-minute-old price during a crash), an attacker borrows at the inflated stale price or avoids liquidation.
+
+**Impact**: Undercollateralized loans originate against stale collateral prices. Protocol accrues bad debt. Under extreme staleness, full insolvency possible.
+
+**Recommended Check**:
+```move
+let max_age_secs: u64 = 60; // e.g. 60 seconds
+let price = pyth::get_price_no_older_than(&price_info_object, clock, max_age_secs);
+```
+Or manually: `assert!(timestamp::now_seconds() - price.publish_time <= MAX_STALENESS, ESTALE_PRICE);`
+
+**SKILL.md Mapping**: Step 2 (Staleness Analysis) / Step 2c (Pyth-Specific Checks) — `get_price()` vs `get_price_no_older_than()` used?
+
+---
+
+## WE-OR-02
+
+**Title**: Pyth price zero-value not rejected — zero oracle price accepted as valid
+**Severity**: HIGH
+**Tags**: oracle, pyth, zero_price
+**Protocol/Platform**: Bluefin (Sui/Move perpetual exchange — pattern directly applicable to Aptos Pyth consumers)
+**Source**: MoveBit audit of Bluefin (Hackenproof contest, February 2024) — https://www.movebit.xyz/blog/post/Bluefin-vulnerabilities-explanation-1.html
+
+**Pattern**: Protocol calls `pyth::get_price_unsafe` and checks that the price is non-negative using `get_magnitude_if_positive`, but does not check for `price == 0`. In Move/Pyth's I64 representation, `0` is encoded as `{magnitude: 0, negative: false}` and passes a "non-negative" check.
+
+**Attack / Failure Path**:
+1. If a Pyth feed momentarily returns price = 0 (feed initialization, data gap, or intentional feed manipulation).
+2. Protocol accepts `0` as a valid price.
+3. Downstream: collateral valued at zero triggers mass liquidations; or perpetual positions calculated at zero price are settled incorrectly.
+
+**Impact**: Protocol-wide incorrect pricing for all operations that consume this feed. Mass incorrect liquidations or under-valued position settlement.
+
+**Fix**: After sign check, add `assert!(price_value > 0, EZERO_PRICE);`
+
+**SKILL.md Mapping**: Step 6 (Oracle Failure Modes) — "Zero return" row; Step 2c — `price.price` (I64) sign checked (> 0)?
+
+---
+
+## WE-OR-03
+
+**Title**: Pyth confidence interval not validated — wide confidence band accepted as precise price
+**Severity**: MEDIUM
+**Tags**: oracle, pyth, confidence
+**Protocol/Platform**: Generic Pyth consumer pattern; specific instance: Debita protocol (Sherlock 2024, issue #548 — cross-chain pattern applicable to Move)
+**Source**: https://github.com/sherlock-audit/2024-10-debita-judging/issues/548 + Pyth Best Practices docs
+
+**Pattern**: Protocol reads `price.price` but ignores `price.conf` (confidence interval). Pyth publishes `conf` as a ±range around the price. During market stress, conf can be very wide (e.g., conf/price > 10%), meaning the actual market price could be `price ± conf`. Protocol treats `price.price` as exact.
+
+**Attack / Failure Path**:
+1. During a volatile event, Pyth publishes price=1000, conf=200 (20% range).
+2. Protocol uses 1000 as the exact collateral value.
+3. Attacker borrows using an asset actually worth 800 (lower confidence bound).
+4. Attacker exits; collateral is insufficient to cover the debt.
+
+**Impact**: Systematic over-valuation of collateral during market stress precisely when liquidation accuracy matters most. Bad debt accumulation.
+
+**Recommended Check**: Enforce `conf * CONF_MULTIPLIER <= price` (e.g., conf must be < 2% of price). Pyth docs recommend rejecting prices where `conf / price > threshold`.
+
+**SKILL.md Mapping**: Step 2c — `price.conf` confidence interval checked?
+
+---
+
+## WE-OR-04
+
+**Title**: Pyth `publish_time` can be in the future — staleness check is not bidirectional
+**Severity**: LOW-MEDIUM
+**Tags**: oracle, pyth, staleness
+**Protocol/Platform**: Folks Finance (Algorand/Aptos-applicable pattern) — Immunefi Boost finding #33443
+**Source**: https://github.com/immunefi-team/Past-Audit-Competitions/blob/main/Folks%20Finance/Boost%20_%20Folks%20Finance%2033443%20-%20%5BSmart%20Contract%20-%20Low%5D%20StalenessCircuitBreakerNode%20checks%20if%20the%20last%20update%20time%20of%20the%20parent%20node%20is%20less%20than%20the%20threshold%20but%20the%20publicTime%20could%20be%20greater%20than%20current%20blocktimestamp.md
+
+**Pattern**: Staleness check only validates that `publish_time` is not too old (`now - publish_time <= threshold`). It does not check that `publish_time <= now`. Due to clock skew or Pyth off-chain publisher issues, `publish_time` can be slightly in the future relative to on-chain `block.timestamp`. The staleness tolerance math treats future timestamps as passing validation.
+
+**Attack / Failure Path**: A Pyth price with `publish_time = now + delta` bypasses "is this too old?" check. The price may correspond to a speculative or erroneous future state. Combining with other oracle timing assumptions, an attacker can craft transactions that use these future-timestamped prices.
+
+**Impact**: Low-to-medium depending on the delta and protocol's use of the price. Creates edge case in timing-sensitive liquidations.
+
+**Fix**: `assert!(price.publish_time <= timestamp::now_seconds(), EFUTURE_PRICE);`
+
+**SKILL.md Mapping**: Step 2c — `price.publish_time` freshness validated?
+
+---
+
+## WE-OR-05
+
+**Title**: Oracle staleness parameter unbounded — admin can set max staleness to u64::MAX enabling permanently stale prices
+**Severity**: HIGH
+**Tags**: oracle, staleness, price_deviation
+**Protocol/Platform**: Navi Protocol (Sui Move — pattern directly applicable to Aptos Pyth/Supra integrations)
+**Source**: Veridise audit VAR_Navi-240607 (2024) — https://veridise.com/wp-content/uploads/2024/11/VAR_Navi-240607-Decentralized_Oracle_Integration.pdf
+
+**Pattern (V-NOR-VUL-001)**: A function protected by `OracleAdminCap` allows an authorized admin to update the maximum staleness threshold parameter. The function has no upper-bound validation on the new value. If an admin (or a compromised admin key) sets this to `u64::MAX` or any very large value, the oracle price freshness check is rendered permanently bypassed.
+
+**Attack / Failure Path**:
+1. Admin (or attacker with stolen admin key) calls `set_max_staleness(u64::MAX)`.
+2. All price freshness assertions pass unconditionally.
+3. Protocol proceeds with arbitrarily stale prices indefinitely.
+
+**Impact**: Complete neutralization of the staleness circuit breaker. Combined with a stale feed, enables all failure modes described in WE-OR-01.
+
+**Fix**: Add `assert!(new_max_staleness <= ABSOLUTE_MAX_STALENESS, EINVALID_PARAM);` with a protocol-defined absolute ceiling (e.g., 300 seconds for active feeds).
+
+**SKILL.md Mapping**: Step 5c (Deviation Reference Point Audit) — reference manipulable by admin? Step 6 — circuit breaker check.
+
+---
+
+## WE-OR-06
+
+**Title**: Pyth confidence interval not consumed — separate high-severity finding in Veridise Navi audit
+**Severity**: MEDIUM
+**Tags**: oracle, pyth, confidence
+**Protocol/Platform**: Navi Protocol (Sui Move)
+**Source**: Veridise audit VAR_Navi-240607, finding V-NOR-VUL-010 — https://veridise.com/wp-content/uploads/2024/11/VAR_Navi-240607-Decentralized_Oracle_Integration.pdf
+
+**Pattern**: The Navi oracle module fetches price from Pyth but reads only `price.price`, discarding `price.conf`. No confidence band check exists anywhere in the oracle consumption path.
+
+**Note**: This is a separate confirmed finding from a published audit (not an inference), covering the same confidence-band pattern as WE-OR-03 but with a distinct protocol and auditor. Useful as a second data point for prevalence.
+
+**Impact**: As WE-OR-03 — over-valuation of collateral during high-volatility periods.
+
+**SKILL.md Mapping**: Step 2c — `price.conf` confidence interval checked?
+
+---
+
+## WE-OR-07
+
+**Title**: DEX spot price used as sole oracle — flash-loan manipulable in Move username/domain pricing
+**Severity**: HIGH
+**Tags**: oracle, spot_price_manipulation, price_deviation
+**Protocol/Platform**: Initia Move (username module)
+**Source**: Local CSV row_index 1804 (candidates.jsonl) — Sherlock/audit finding, HIGH severity
+
+**Pattern**: The `usernames` module reads the spot price from the Dex module (on-chain AMM reserves ratio) to calculate domain registration and extension fees. No TWAP. No external oracle. The spot price can be moved in the same transaction by a flash loan or large deposit.
+
+**Attack / Failure Path**:
+1. Attacker takes a flash loan and performs a large swap in the DEX pool used for pricing.
+2. Spot price shifts to attacker's advantage (e.g., target token becomes artificially cheap).
+3. Attacker registers or extends domains at a fraction of the intended cost in the same transaction.
+4. Attacker repays flash loan. Net cost: flash loan fee only. Gain: underpriced domain(s).
+5. Other users who register at the now-restored "normal" price effectively overpay relative to attacker.
+
+**Impact**: Domain registrations available at near-zero cost. Protocol revenue drained. Other users front-run on pricing.
+
+**Fix**: Replace spot price with a TWAP (minimum 30-minute window) or an external oracle such as Slinky (Initia's enshrined oracle). Protocol confirmed fix: hardcode price at 1 at launch, migrate to Slinky oracle.
+
+**SKILL.md Mapping**: Step 4 (TWAP-Specific Analysis — absence of TWAP); Step 5c (Deviation Reference — spot price is manipulable reference); Step 6 (Failure modes — flash loan path).
+
+---
+
+## Coverage Summary
+
+| ID | Severity | Tag(s) | Oracle | Source Type |
+|----|----------|--------|--------|-------------|
+| WE-OR-01 | HIGH | staleness | Pyth | Pyth docs + Aptos guidelines |
+| WE-OR-02 | HIGH | zero_price | Pyth | Published audit (MoveBit/Bluefin) |
+| WE-OR-03 | MEDIUM | confidence | Pyth | Sherlock finding + Pyth docs |
+| WE-OR-04 | LOW-MED | staleness | Pyth | Immunefi Boost finding |
+| WE-OR-05 | HIGH | staleness, price_deviation | Pyth/Supra | Published audit (Veridise/Navi) |
+| WE-OR-06 | MEDIUM | confidence | Pyth | Published audit (Veridise/Navi) |
+| WE-OR-07 | HIGH | spot_price_manipulation | DEX spot | Local CSV (Initia Move, Sherlock) |
+
+Local CSV contributed: 1 directly (WE-OR-07 from row_index 1804). Web research contributed: 6 new findings.
+Total: 7 findings.
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

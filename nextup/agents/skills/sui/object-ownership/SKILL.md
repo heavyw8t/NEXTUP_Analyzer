@@ -209,6 +209,343 @@ For each `dynamic_field::add`, `dynamic_field::remove`, `dynamic_object_field::a
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From web-sourced audit reports
+
+# Source: WebSearch — MoveBit, Zellic, SlowMist, Mirage Audits, OpenZeppelin, Hacken, Monethic, Sui Docs
+# Populated: 2026-04-19
+# Local CSV hits: 0 → WebSearch fallback
+
+---
+
+## Finding [OO-W1]: AdminCap or Governance Capability Shared Publicly via `transfer::public_share_object`
+
+**Verdict**: CONFIRMED
+**Category**: shared_object / object_ownership
+**Severity**: Critical
+**Sources**: MoveBit "Sui Objects Security Principles and Best Practices"; SlowMist Sui Move Auditing Primer; Monethic Sui Move Security Workshop
+
+**Description**:
+A capability object (AdminCap, OwnerCap, GovernanceCap) is created and then passed to `transfer::public_share_object` (or `transfer::share_object`) instead of being transferred exclusively to the deploying admin address via `transfer::transfer`. This makes the capability permanently and irreversibly accessible to every address on the network as a shared object. Any transaction can pass the shared capability as an argument to admin-gated functions, effectively granting every user admin privileges.
+
+**Pattern**:
+```move
+// Vulnerable: AdminCap becomes globally mutable
+let cap = AdminCap { id: object::new(ctx) };
+transfer::public_share_object(cap);  // WRONG — should be transfer::transfer(cap, ctx.sender())
+```
+
+**Impact**: Complete loss of access control over all admin-gated functions. Any user can call `set_fee`, `pause`, `upgrade`, or any function that accepts `&AdminCap` or `&mut AdminCap` by passing the shared object.
+
+**Invariant broken**: `object_ownership` — the capability no longer enforces "only admin can call this."
+
+**References**:
+- https://www.movebit.xyz/blog/post/Sui-Objects-Security-Principles-and-Best-Practices.html
+- https://slowmist.medium.com/slowmist-introduction-to-auditing-sui-move-contracts-da005149f6bc
+- https://medium.com/@monethic/sui-move-security-workshop-writeup-material-480c5e7d1da3
+
+---
+
+## Finding [OO-W2]: Capability Object Has `store` Ability — Custom Transfer Rules Bypassed via `public_transfer`
+
+**Verdict**: CONFIRMED
+**Category**: transfer_share / object_ownership
+**Severity**: High
+**Sources**: Sui Docs "Custom Transfer Rules"; MoveBit security blog; Hacken Move Audit Checklist; Mirage Audits ability mistakes
+
+**Description**:
+A capability or restricted object (AdminCap, VaultCap, MintCap) is declared with the `store` ability. When an object has `key + store`, anyone holding the object can call `sui::transfer::public_transfer` to transfer it to an arbitrary address, bypassing any custom transfer rules the module defined. If the module defines a transfer function that enforces fees, role checks, or other restrictions, those checks are entirely skipped when `public_transfer` is used.
+
+**Pattern**:
+```move
+// Vulnerable: store ability enables public_transfer bypass
+struct MintCap has key, store {   // "store" is the problem
+    id: UID,
+    max_supply: u64,
+}
+
+// Module-defined transfer enforces a fee check — but it is bypassed because:
+// anyone can call sui::transfer::public_transfer(cap, recipient) directly
+```
+
+**Impact**: Capability holder can transfer the cap to any address including attacker-controlled accounts without going through the module's intended verification logic. If the module intended "cap can only be transferred to verified addresses," the invariant is broken.
+
+**Invariant broken**: `transfer_share` — `public_transfer` is an escape hatch that bypasses module-defined access control when `store` is present.
+
+**References**:
+- https://docs.sui.io/concepts/transfers/custom-rules
+- https://www.movebit.xyz/blog/post/Sui-Objects-Security-Principles-and-Best-Practices.html
+- https://hacken.io/discover/move-smart-contract-audit-checklist/
+- https://www.mirageaudits.com/blog/sui-move-ability-security-mistakes
+
+---
+
+## Finding [OO-W3]: Object with `store` Ability Frozen by Third Party via `public_freeze_object`
+
+**Verdict**: CONFIRMED
+**Category**: object_ownership / shared_object
+**Severity**: High
+**Sources**: Zellic "Move Fast & Break Things Part 2"; Hacken Move Audit Checklist
+
+**Description**:
+When a Sui object has the `store` ability, any address holding a reference to it — not just the module that defined it — can call `transfer::public_freeze_object` on it. Freezing is irreversible: once frozen, the object can never be mutated again. If the object holds mutable configuration (fee parameters, oracle addresses, admin keys, protocol state), a malicious holder or front-runner can freeze it before the protocol has finished its initialization or at a point that locks in unfavorable state forever.
+
+**Pattern**:
+```move
+// Config object with store: third party can freeze it
+struct ProtocolConfig has key, store {
+    id: UID,
+    fee_bps: u64,
+    oracle: address,
+}
+
+// After the deployer creates and transfers this to admin, a third party
+// who receives or borrows the object (in a PTB) can call:
+// transfer::public_freeze_object(config);
+// — making it permanently immutable at whatever state it was in
+```
+
+**Impact**: Protocol configuration permanently locked at possibly incorrect or attacker-chosen values. No future upgrades, parameter adjustments, or emergency corrections are possible.
+
+**Invariant broken**: `object_ownership` — the module's expectation that only the module controls mutability of its own config object is violated.
+
+**References**:
+- https://www.zellic.io/blog/move-fast-break-things-move-security-part-2/
+- https://hacken.io/discover/move-smart-contract-audit-checklist/
+
+---
+
+## Finding [OO-W4]: Shared Object Mutation Function Has No Access Guard
+
+**Verdict**: CONFIRMED
+**Category**: shared_object
+**Severity**: Critical
+**Sources**: SlowMist Sui Move Auditing Primer; MoveBit security blog; Sui Docs shared objects; Hacken checklist
+
+**Description**:
+A function that takes `&mut SharedObj` performs a state mutation (balance update, fee change, configuration update, pool parameter change) without verifying that the caller has the necessary capability or matches the expected admin address. Because shared objects can be passed as arguments by ANY transaction, the mutation is callable by anyone.
+
+**Pattern**:
+```move
+// Vulnerable: no guard on mutation of shared pool config
+public entry fun set_fee(pool: &mut Pool, new_fee: u64) {
+    pool.fee_bps = new_fee;  // No capability check, no address check
+}
+```
+
+**Impact**: Any user can call `set_fee` (or equivalent state mutation function) and set parameters to arbitrary values. Depending on the mutated field: fee extraction, pool draining, denial of service, or complete protocol corruption.
+
+**Invariant broken**: `shared_object` — shared object mutation must be guarded; absence of guard means the "shared" access model has no restriction at all.
+
+**References**:
+- https://slowmist.medium.com/slowmist-introduction-to-auditing-sui-move-contracts-da005149f6bc
+- https://www.movebit.xyz/blog/post/Sui-Objects-Security-Principles-and-Best-Practices.html
+- https://docs.sui.io/concepts/object-ownership/shared
+
+---
+
+## Finding [OO-W5]: `object::delete` Called Without Removing Dynamic Fields — Permanent Orphan
+
+**Verdict**: CONFIRMED
+**Category**: UID
+**Severity**: Medium
+**Sources**: Sui Docs "Dynamic Fields"; The Move Book dynamic fields chapter; SlowMist Sui Auditing Primer
+
+**Description**:
+When `object::delete(id)` is called to destroy an object's UID, the Sui runtime does NOT automatically remove dynamic fields attached to that UID. Any dynamic fields added via `dynamic_field::add` or `dynamic_object_field::add` on the now-deleted UID become permanently orphaned: they still consume on-chain storage, they are not subject to storage fee rebate, and they can never be accessed or removed because the parent UID no longer exists.
+
+**Pattern**:
+```move
+// Vulnerable: dynamic fields added, then parent UID deleted without cleanup
+fun destroy_position(pos: Position) {
+    let Position { id, ... } = pos;
+    // Dynamic fields (e.g., reward trackers) were added to `id`
+    // but are never removed here
+    object::delete(id);  // UID deleted, dynamic fields orphaned permanently
+}
+```
+
+**Impact**: On-chain storage leak — storage fees are paid but never rebated. If the orphaned dynamic fields hold `Balance<T>` or `Coin<T>`, those funds are permanently stranded with no recovery path. Severity escalates to HIGH/CRITICAL if value-bearing fields are orphaned.
+
+**Invariant broken**: `UID` — every dynamic field on a UID must be removed before `object::delete` is called.
+
+**References**:
+- https://move-book.com/programmability/dynamic-fields/
+- https://docs.sui.io/concepts/dynamic-fields
+- https://github.com/slowmist/Sui-MOVE-Smart-Contract-Auditing-Primer
+
+---
+
+## Finding [OO-W6]: Wrapped Object Has No Unwrap Path — Value Permanently Locked
+
+**Verdict**: CONFIRMED
+**Category**: object_ownership / shared_object
+**Severity**: High
+**Sources**: Sui Docs "Wrapped Objects"; Zellic Sui Security Primer; SlowMist auditing primer
+
+**Description**:
+An object holding value (Balance, Coin, NFT) is embedded as a direct field inside a parent wrapper object (direct wrapping). The wrapped object loses its independent on-chain identity and can no longer be accessed directly — only through the parent. If no function exists to unwrap (extract) the inner object, or if the only unwrap path is guarded behind conditions that can never be satisfied (e.g., requires a destroyed capability), the value inside is permanently locked.
+
+**Pattern**:
+```move
+struct Vault has key {
+    id: UID,
+    locked_coin: Coin<SUI>,  // Directly wrapped — not accessible independently
+}
+
+// If destroy_vault() is never defined, or is only callable by an
+// AdminCap that was already consumed/transferred to @0x0,
+// the Coin<SUI> inside is permanently locked.
+```
+
+**Impact**: Permanent loss of any value held by wrapped objects that lack a viable unwrap path. Users cannot recover deposited funds.
+
+**Invariant broken**: `object_ownership` — wrapped objects must have accessible extraction paths for any value they hold.
+
+**References**:
+- https://docs.sui.io/concepts/object-ownership/wrapped
+- https://www.zellic.io/blog/move-fast-break-things-move-security-part-2/
+- https://github.com/slowmist/Sui-MOVE-Smart-Contract-Auditing-Primer
+
+---
+
+## Finding [OO-W7]: Shared Object Transaction Ordering Dependency — TOCTOU via Consensus
+
+**Verdict**: CONFIRMED
+**Category**: shared_object
+**Severity**: Medium
+**Sources**: Sui Docs "Consensus"; Sui Lutris paper; SlowMist auditing primer
+
+**Description**:
+A protocol function on a shared object performs a read-modify-write pattern where the result depends on the ordering of concurrent transactions. Because Sui's consensus layer (Mysticeti/Bullshark) determines transaction ordering for shared objects non-deterministically from the user's perspective, a user's transaction outcome depends on which other transactions executed first against the same shared object. Protocols that assume sequential or atomic access — for example, a price oracle read followed by a swap — are vulnerable to front-running or sandwich attacks via transaction ordering manipulation.
+
+**Pattern**:
+```move
+// Shared pool: attacker submits tx B before user's tx A completes
+public entry fun swap(pool: &mut Pool, coin_in: Coin<A>, min_out: u64, ctx: &mut TxContext) {
+    let price = pool.reserve_a / pool.reserve_b;  // Read
+    // Attacker's tx mutates reserve_a and reserve_b here (ordering attack)
+    let out = calculate_out(coin_in, price);       // Stale price used
+    assert!(out >= min_out, ESlippage);
+    // ...
+}
+```
+
+**Impact**: Front-running and sandwich attacks on AMM pools, lending protocols, and any shared-object protocol that relies on a consistent view of state across a read-then-write sequence. Financial loss for users; profit extraction for attackers with insight into pending transaction queues.
+
+**Invariant broken**: `shared_object` — protocols using shared objects must account for non-deterministic ordering at the consensus layer.
+
+**References**:
+- https://docs.sui.io/develop/sui-architecture/consensus
+- https://sonnino.com/papers/sui-lutris.pdf
+- https://slowmist.medium.com/slowmist-introduction-to-auditing-sui-move-contracts-da005149f6bc
+
+---
+
+## Finding [OO-W8]: Receipt / Hot-Potato Struct Given `drop` or `store` Ability — Flash Loan Repayment Bypass
+
+**Verdict**: CONFIRMED
+**Category**: object_ownership / transfer_share
+**Severity**: Critical
+**Sources**: MoveBit "Sui Objects Security Principles and Best Practices"; Mirage Audits ability mistakes; Hacken Move Audit Checklist
+
+**Description**:
+A "hot potato" struct (a receipt or proof object with no abilities, designed to force a repayment call within the same PTB) is accidentally given the `drop` and/or `store` ability. A hot potato with `drop` can be discarded without calling the repayment/settlement function, allowing a borrower to take flash-loaned assets without repaying. A hot potato with `store` can be wrapped inside another object and transferred out of the current transaction context, deferring or permanently avoiding repayment.
+
+**Pattern**:
+```move
+// Vulnerable: FlashReceipt can be dropped without repayment
+struct FlashReceipt has drop, store {  // WRONG — should have zero abilities
+    amount_borrowed: u64,
+    pool_id: ID,
+}
+
+public fun borrow(pool: &mut Pool, amount: u64, ctx: &mut TxContext): (Coin<SUI>, FlashReceipt) {
+    // ...
+}
+
+public fun repay(pool: &mut Pool, coin: Coin<SUI>, receipt: FlashReceipt) {
+    // Receipt is consumed here — but with `drop`, caller never needs to call this
+    let FlashReceipt { amount_borrowed, pool_id: _ } = receipt;
+    // ...
+}
+// Attacker calls borrow(), takes Coin<SUI>, and simply drops FlashReceipt
+```
+
+**Impact**: Flash loan repayment entirely bypassed. Attacker drains pool liquidity without returning assets.
+
+**Invariant broken**: `object_ownership` — zero-ability hot potato structs must not have `drop` or `store`; adding either destroys the enforcement mechanism.
+
+**References**:
+- https://www.movebit.xyz/blog/post/Sui-Objects-Security-Principles-and-Best-Practices.html
+- https://www.mirageaudits.com/blog/sui-move-ability-security-mistakes
+- https://hacken.io/discover/move-smart-contract-audit-checklist/
+
+---
+
+## Finding [OO-W9]: Object Transferred to Uncontrolled Address (`@0x0` or Contract-Only Address) — Phantom Ownership
+
+**Verdict**: CONFIRMED
+**Category**: address_ownership / object_ownership
+**Severity**: Medium
+**Sources**: Sui Docs object ownership; Hacken Move Audit Checklist; SlowMist Sui Auditing Primer
+
+**Description**:
+An object is transferred to an address that has no corresponding private key or module capable of using it — for example, `@0x0`, a burned address, a module address with no entry functions that accept this object type, or a hardcoded placeholder. The object still exists on-chain, still consumes storage, but is permanently inaccessible. If the object holds `Balance<T>`, `Coin<T>`, or other value types, those assets are permanently lost. This pattern sometimes appears in protocol initialization code where a capability is "burned" to restrict admin access, but the wrong object is sent instead of the cap.
+
+**Pattern**:
+```move
+// Intended: burn admin cap by transferring to a dead address
+// Actual: accidentally transfers a fee-collecting vault instead of the cap
+transfer::transfer(fee_vault, @0x0);  // Vault with accumulated fees permanently stranded
+```
+
+**Impact**: Any value held by the transferred object is permanently stranded. If the object is a protocol capability, the capability is permanently lost and no admin actions can be performed, potentially bricking the protocol.
+
+**Invariant broken**: `address_ownership` — transfer recipients must be verified to be addresses that can use the transferred object.
+
+**References**:
+- https://docs.sui.io/guides/developer/sui-101/object-ownership
+- https://hacken.io/discover/move-smart-contract-audit-checklist/
+- https://slowmist.medium.com/slowmist-introduction-to-auditing-sui-move-contracts-da005149f6bc
+
+---
+
+## Finding [OO-W10]: Dynamic Fields Added to Wrapped Object UID Before Wrapping — Inaccessible Until Unwrap
+
+**Verdict**: CONFIRMED
+**Category**: UID / object_ownership
+**Severity**: Low-Medium
+**Sources**: Sui Docs "Wrapped Objects" and "Dynamic Fields"; Zellic Sui Security Primer; The Move Book
+
+**Description**:
+`dynamic_field::add` is called on a child object's UID before the child is embedded (wrapped) inside a parent object. Once the child is wrapped, it loses its independent on-chain identity. Its UID is no longer directly addressable, so all dynamic fields attached to that UID become inaccessible until the child is unwrapped. If the protocol then reads those dynamic fields from the parent context without unwrapping first, the reads will fail or return stale state. If the child is later destroyed without being unwrapped, the dynamic fields are orphaned.
+
+**Pattern**:
+```move
+// Vulnerable: dynamic fields added before object is wrapped
+let mut child = ChildObj { id: object::new(ctx), value: 0 };
+dynamic_field::add(&mut child.id, b"rewards", reward_balance);  // Field added here
+
+// Object is then wrapped into parent — dynamic fields become inaccessible
+let parent = ParentObj { id: object::new(ctx), child: child };
+transfer::transfer(parent, ctx.sender());
+// reward_balance is now inaccessible until parent is destroyed and child unwrapped
+```
+
+**Impact**: Protocol state inconsistency — dynamic fields that should be readable are silently inaccessible. Value-bearing fields (reward balances, accumulated fees) become stranded until the object is unwrapped. If the unwrap path does not handle these dynamic fields, they are orphaned on destruction.
+
+**Invariant broken**: `UID` — dynamic fields on a UID that will be wrapped must be managed carefully; access is blocked for the duration of wrapping.
+
+**References**:
+- https://docs.sui.io/concepts/object-ownership/wrapped
+- https://docs.sui.io/concepts/dynamic-fields
+- https://www.zellic.io/blog/move-fast-break-things-move-security-part-2/
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |
