@@ -190,6 +190,76 @@ For each authority type, assess revocation status and path:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+---
+
+- Pattern: Multisig creation uses an unauthenticated `create_key` PDA seed, allowing an attacker to front-run the victim's `create_multisig` transaction and substitute their own members list, gaining threshold control over the multisig vault.
+  Where it hit: Squads protocol, `create_multisig` instruction
+  Severity: HIGH
+  Source: Solodit (row_id 9973)
+  Summary: The `create_multisig` instruction derives the multisig PDA from a `create_key` that any signer can supply without proof of ownership. An attacker watches the mempool, front-runs with the victim's `create_key` and a modified members list containing attacker-controlled keys, then drains vault funds once accumulation reaches critical mass. Fix: require the `create_key` account to be a signer of the `create_multisig` instruction so only the key-owner can create the corresponding multisig.
+  Map to: multisig, authority_rotation
+
+---
+
+- Pattern: Init instruction accepts any arbitrary signer as `super_admin` with no validation against the mint authority, so any caller can seize super-admin rights and disable the whitelist.
+  Where it hit: Unnamed SPL token protocol, initialization instruction
+  Severity: MEDIUM
+  Source: Solodit (row_id 286)
+  Summary: The init instruction stores the transaction signer directly as `super_admin` without checking whether that signer is the mint authority. An attacker can invoke init before the legitimate deployer and claim super-admin, then disable whitelist controls at zero cost. Fix: constrain `super_admin` to the mint authority during initialization.
+  Map to: admin_authority, upgrade_authority
+
+---
+
+- Pattern: `InitializeGlobalState` allows any user to set `super_admin` and `admin` to arbitrary values; `admin` is not required to sign, enabling fake global state accounts that steal tokens or DoS legitimate admins.
+  Where it hit: Unnamed Solana program, `InitializeGlobalState` instruction
+  Severity: MEDIUM
+  Source: Solodit (row_id 287)
+  Summary: There are no constraints preventing a malicious actor from calling `InitializeGlobalState` with attacker-controlled pubkeys for `super_admin` and `admin`. The instruction also does not require `admin` to sign, so fake oracle and global state accounts can be created with adversarial parameters. Fix: restrict `super_admin` to a hardcoded trusted address, require `admin` to sign, and tighten `global_state` PDA derivation.
+  Map to: admin_authority, upgrade_authority
+
+---
+
+- Pattern: TSS authority update resets the authorized signer key but does not reset the nonce counter, so previously authorized signatures remain valid and can be replayed after a key rotation.
+  Where it hit: ZetaChain Solana bridge, TSS address update function
+  Severity: MEDIUM
+  Source: Solodit (row_id 1584)
+  Summary: When the authority rotates the TSS address from key A to key B, the nonce is not reset to zero. Any old signature from key A that was authorized under a prior nonce is still accepted, enabling replay of unauthorized transactions. Fix: atomically reset the nonce to 0 whenever the TSS address is updated. The protocol team resolved this in their patch.
+  Map to: authority_rotation, set_authority
+
+---
+
+- Pattern: Protocol `lp_wallet` address is settable without validation or timelock, allowing the admin to redirect lamport withdrawals to an arbitrary account.
+  Where it hit: Entangle protocol, wallet initialization / round management
+  Severity: MEDIUM
+  Source: Solodit (row_id 5951)
+  Summary: The `lp_wallet` field is written without constraining it to a multisig or trusted address. An admin (or a compromised key) can point `lp_wallet` at any account before the next withdrawal, diverting all outgoing SOL. Additionally, new rounds do not enforce `sol_deposited = 0`, producing inconsistent accounting. Fix: enforce a trusted multisig constant for `lp_wallet` and initialize `sol_deposited` to zero on every new round.
+  Map to: set_authority, admin_authority
+
+---
+
+- Pattern: `create_oracle` and `create_pool` instructions carry no permission control, so any caller can create oracle or pool accounts with attacker-set parameters and manipulate prices or steal funds.
+  Where it hit: WOOFi Solana, `create_oracle` / `create_pool` instructions
+  Severity: MEDIUM
+  Source: Solodit (row_id 4398)
+  Summary: Both instructions accept arbitrary callers because the `admin` field in the context is not constrained to `wooconfig.authority`. Attackers can insert malicious oracles or pools before the legitimate admin, poisoning price feeds. Fix: add a `has_one = authority` constraint (or equivalent check) binding oracle/pool creation to `wooconfig.authority`.
+  Map to: admin_authority, set_authority
+
+---
+
+- Pattern: Token mint accepted at initialization without checking for an active `freeze_authority`, so a freeze-authority holder can later freeze the protocol's escrow accounts, causing a permanent denial of service and fund lock.
+  Where it hit: ONFT protocol (`init_ONft`), lending collateral validation
+  Severity: HIGH / MEDIUM
+  Source: Solodit (row_id 2980, corroborated by row_id 3941 and row_id 7405)
+  Summary: The `init_ONft` instruction stores a `token_mint` without asserting `freeze_authority == None`. If the freeze authority is later exercised on `token_escrow`, all token transfers to that account fail, rendering the ONFT unusable (DoS) or permanently locking collateral in lending pools. Fix: during initialization, reject any mint whose `freeze_authority` is not `None`; alternatively, log a warning and let the admin allowlist only verified mints.
+  Map to: set_authority, admin_authority, authority_rotation
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Step | Required | Completed? | Notes |

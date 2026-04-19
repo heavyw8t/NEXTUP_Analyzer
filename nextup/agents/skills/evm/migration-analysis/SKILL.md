@@ -261,6 +261,69 @@ For each finding:
 **Postcondition Types**: [List applicable types]
 ```
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Diamond proxy AppStorage struct size mismatch between DiamondCutStorage and UpgradeStorage causes storage slot collision on upgrade
+  Where it hit: ZKsync / `AppStorage` in `Storage.sol` (Diamond proxy)
+  Severity: HIGH
+  Source: Solodit (row_id 13423)
+  Summary: The `AppStorage` struct embedded two nested structs with different sizes, so a contract upgrade shifted every subsequent slot, risking loss of governor privilege and corruption of all stored block info. The fix was to leave the existing struct untouched, append new fields only at the tail of `AppStorage`, document the layout invariant, and add a machine-readable artefact checked in CI.
+  Map to: storage_slot, upgrade
+
+- Pattern: Missing `__gap` in base storage contract allows future upgrades to corrupt storage layout of all child contracts
+  Where it hit: Meson Protocol / `MesonStates.sol` (upgradeable base)
+  Severity: HIGH
+  Source: Solodit (row_id 14760)
+  Summary: `MesonStates` had no `uint256[N] __gap` reserve at the end of its storage. Adding any state variable to that contract during an upgrade shifts the storage slots of every subsequently inherited contract, breaking the system. The short-term fix is to add `uint256[100] __gap` to all stateful base contracts; the long-term fix is to choose an upgrade mechanism that does not rely on inheritance-ordering invariants.
+  Map to: storage_gap, upgrade
+
+- Pattern: Multiple top-level storage contracts inherited without gaps — upgrading any base shifts child contract slots
+  Where it hit: Ribbon Finance / `RibbonThetaVault`, `RibbonDeltaVault` inheriting `OptionsVaultStorage` and a second top-level storage contract
+  Severity: HIGH
+  Source: Solodit (row_id 17474)
+  Summary: `RibbonThetaVault` and `RibbonDeltaVault` each inherited from two independent top-level storage contracts. Because neither base had a `__gap` reservation, any upgrade to `OptionsVaultStorage` that adds a slot shifts the layout of the second inherited base, corrupting every variable that follows. The fix was to reserve gap slots in `OptionsVaultStorage` and restrict upgradeability to the leaf-level storage contracts only.
+  Map to: storage_gap, upgrade
+
+- Pattern: Implementation contract left uninitialized — attacker calls `_authorizeUpgrade` to selfdestruct the proxy implementation
+  Where it hit: Lido / `EasyTrack` UUPS implementation contract
+  Severity: HIGH
+  Source: Solodit (row_id 17510)
+  Summary: The `EasyTrack` implementation was deployed without calling its initializer, leaving `DEFAULT_ADMIN_ROLE` unset. Because `_authorizeUpgrade` was protected only by that unset role, any caller with that role (after granting it themselves) could upgrade to a malicious contract and trigger `selfdestruct`, bricking the entire Easy Track system. The Lido team removed upgradeability from `EasyTrack` and deployed it directly rather than behind a proxy.
+  Map to: initializer, upgrade
+
+- Pattern: No contract existence check before delegatecall — incorrectly-set or self-destructed module silently returns success
+  Where it hit: Yield Protocol / `Ladle.sol` `moduleCall()` and `batch()` functions
+  Severity: HIGH
+  Source: Solodit (row_id 17320)
+  Summary: `Ladle` made `delegatecall` to externally-registered module addresses without first verifying the target was a live contract. EVM returns `success = true` when the callee account does not exist, so a mis-configured or previously destructed module causes entire batches to silently no-op instead of reverting. The fix is to add an existence check (`extcodesize > 0`) before every `delegatecall` and forbid future modules from using `selfdestruct`.
+  Map to: delegatecall, upgrade
+
+- Pattern: Migration wipes proxy storage — already-relayed L2 withdrawal messages can be replayed after Bedrock upgrade
+  Where it hit: Optimism / `L2CrossDomainMessenger` Bedrock migration
+  Severity: HIGH
+  Source: Solodit (row_id 12406)
+  Summary: During the Bedrock migration the `L2CrossDomainMessenger` contract's storage was wiped, clearing the `successfulMessages` mapping that tracked which withdrawals had already been relayed. After deployment the empty mapping allowed any previously-relayed legacy message to be replayed, enabling double-spending of bridged ETH and ERC-20 tokens. The fix is to pre-populate `successfulMessages` from the old contract's state before the upgrade and to read legacy relay status from the original contract address.
+  Map to: migration_state, upgrade
+
+- Pattern: Cross-chain migration with no retry path — failed L2 message permanently strands user tokens
+  Where it hit: Beanstalk / `BeanL1ReceiverFacet` to `BeanL2MigrationFacet` L1-to-L2 migration
+  Severity: HIGH
+  Source: Solodit (row_id 5915)
+  Summary: `BeanL1ReceiverFacet` sent tokens cross-chain to `BeanL2MigrationFacet` but provided no mechanism to retry or recover if the L2 message failed (e.g., insufficient gas or bridge failure). A failed delivery permanently locked the tokens with no exit path for affected users. The fix is to implement a retry queue on L1 that tracks pending migration requests and allows re-submission, and to emit unique request IDs for reconciliation.
+  Map to: migration_state
+
+- Pattern: Wrong precision in migration accounting — grown Stalk overestimated 1e6x, draining governance weight from new depositors
+  Where it hit: Beanstalk / `L2ContractMigrationFacet` smart-contract deposit migration
+  Severity: HIGH
+  Source: Solodit (row_id 5929)
+  Summary: `L2ContractMigrationFacet` calculated grown Stalk for migrated smart-contract deposits using the wrong precision constant, inflating each migrated deposit's Stalk by a factor of 1e6. The inflated Roots minted to migrated accounts were taken from the pool available to new depositors, who then received near-zero Roots. The fix is to use the correct stem-tip precision consistent with the rest of the Silo accounting.
+  Map to: migration_state
+
+
 ## Step Execution Checklist
 
 After completing analysis, verify:

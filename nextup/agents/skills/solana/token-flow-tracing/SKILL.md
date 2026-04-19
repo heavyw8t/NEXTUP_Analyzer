@@ -181,6 +181,87 @@ When this skill identifies an issue:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+Selected from `candidates.jsonl` (9 rows). Distinct mechanisms prioritised; duplicates dropped; HIGH preferred.
+
+---
+
+- Pattern: transfer amount miscalculated — wrong value passed to token CPI
+  Where it hit: `early_purchase::deposit_tokens::handler()` — `token::transfer` CPI passes `sale.calculate_base_purchase_cost(amount_to_deposit)` instead of the raw `params.amount_to_deposit`, so a different quantity of `purchase_mint` tokens is moved than the Guardian intended
+  Severity: HIGH
+  Source: Solodit (row_id 1306)
+  Summary: The handler computes a derived cost figure and passes it as the CPI transfer amount rather than the caller-supplied deposit amount. The actual tokens transferred diverge from the authorised quantity on every deposit. Depending on the cost function the vault receives more or fewer tokens than recorded, breaking per-sale accounting. The fix is to use `params.amount_to_deposit` directly as the CPI amount.
+  Map to: token_transfer
+
+---
+
+- Pattern: wrong signer authority on token transfer CPI
+  Where it hit: `early_purchase::redeem_receipt::handler()` — `token::transfer` CPI sets the buyer's keypair as the authority; the sale vault PDA should be the authority, so the CPI either fails when the buyer has no approval or succeeds with the wrong signer
+  Severity: HIGH
+  Source: Solodit (row_id 1307)
+  Summary: Receipt redemption builds a Transfer instruction with the buyer as the authority field instead of the PDA that owns the sale token vault. If the buyer happens to have an approval the transfer succeeds but bypasses PDA-signed control; if not it reverts and locks redemptions. The correct fix is to derive the sale PDA and pass it as the authority with `invoke_signed`.
+  Map to: token_authority
+
+---
+
+- Pattern: token mint not validated against stored receipt mint
+  Where it hit: `bridge_tokens` instruction — `token_mint` account is accepted without checking it equals `Deposit.restake_receipt_token_mint`; attacker supplies an arbitrary mint and drains a different escrow account
+  Severity: HIGH
+  Source: Solodit (row_id 5123)
+  Summary: The instruction receives `token_mint` as an unconstrained account. Because the mint is never compared to the value stored in `Deposit`, any mint whose associated escrow the attacker controls can be substituted. The transfer then moves tokens out of that escrow rather than the intended one. Additionally, `staker` is not marked `Signer`, removing the only remaining access check. The fix adds a mint equality constraint and marks `staker` as a required signer.
+  Map to: token_mint_mismatch
+
+---
+
+- Pattern: wrong CPI authority enables self-to-pool token drain
+  Where it hit: `compress_spl_tokens` — CPI uses `cpi_authority_pda` as the transfer authority; attacker sets `token_pool_pda` and `compress_or_decompress_token_account` to the same account, so the CPI moves tokens the attacker controls rather than the caller's tokens
+  Severity: HIGH
+  Source: Solodit (row_id 5321)
+  Summary: The function signs the transfer with an internal PDA instead of `ctx.accounts.authority`. An attacker who controls any token account that the PDA can sign for points both the source and destination at that account, netting the pool's balance. Using `ctx.accounts.authority` as the CPI signer restricts the transfer to accounts the actual caller controls.
+  Map to: token_authority, token_transfer
+
+---
+
+- Pattern: mint mismatch DoS via token account replacement
+  Where it hit: `prepare_order_execution` / `improve_offer` — code checks `data_is_empty()` to detect non-existent token accounts; attacker closes the initial/best-offer token account and reopens it with a different mint, passing the emptiness check but causing the downstream transfer to revert on mint mismatch
+  Severity: HIGH
+  Source: Solodit (row_id 6363)
+  Summary: Both functions gate token account existence on whether the account data is empty. An attacker submits a bid, closes the associated token account, and recreates it with an unrelated mint. The emptiness check passes, execution proceeds, and the token CPI fails because the mint no longer matches the order's expected mint. This permanently blocks auction execution for the affected order. The fix is to validate the account as a proper token account and check its mint field rather than relying on emptiness.
+  Map to: token_mint_mismatch
+
+---
+
+- Pattern: integer overflow in per-transfer incentive accumulation
+  Where it hit: bridge transfer incentive tracking — cumulative incentives earned across transfers are not bounded; a crafted sequence of transfer amounts triggers overflow, corrupting the incentive state and potentially enabling excessive reward extraction
+  Severity: HIGH
+  Source: Solodit (row_id 9881)
+  Summary: The code accumulates incentives earned per transfer without a ceiling check against the configured threshold. An attacker sends a precise sequence of amounts that causes the running total to overflow, resetting or wrapping the counter. This can be exploited to trigger repeated incentive payouts beyond the intended cap. Using `saturating_sub` (or equivalent saturating arithmetic) on the accumulator prevents overflow while preserving the intended logic.
+  Map to: token_transfer
+
+---
+
+- Pattern: PDA seeds missing a binding field — funds diverted to attacker-controlled account
+  Where it hit: `prepare_market_order` — transfer-authority PDA is derived without hashing the `refund_token` field; attacker sets an arbitrary `refund_token`; when the order is closed via `close_prepare_order` the refund goes to the attacker's account
+  Severity: MEDIUM
+  Source: Solodit (row_id 6361)
+  Summary: The PDA that authorises fund movement is derived from a subset of the order's fields, omitting `refund_token`. Because `refund_token` is not bound to the PDA, any address can be supplied. An attacker creates a prepared order with their own address as `refund_token`; if the originator's transaction sequence fails, `close_prepare_order` transfers the locked tokens to the attacker. The fix includes `refund_token` in the PDA seed hash.
+  Map to: token_authority
+
+---
+
+- Pattern: unvalidated remaining_accounts — sender spoofed in OFT CPI
+  Where it hit: `send::apply` — intermediate accounts passed via `remaining_accounts` are forwarded to the endpoint program CPI without verifying each account matches the expected signer address; attacker substitutes a crafted account to spoof the OFT sender
+  Severity: MEDIUM
+  Source: Solodit (row_id 6573)
+  Summary: The send path iterates `remaining_accounts` and passes them directly into the endpoint CPI. No account in the slice is checked against the expected signer derived from the OFT state. An attacker supplies a replacement account that satisfies the CPI structure but represents a different sender identity, enabling unauthorised token transfers attributed to a victim address. The fix validates each element of `remaining_accounts` against the expected signer before CPI invocation.
+  Map to: transfer_checked, token_authority
+
+
 ## Step Execution Checklist (MANDATORY)
 
 > **CRITICAL**: You MUST report completion status for ALL sections. Findings with incomplete sections will be flagged for depth review.

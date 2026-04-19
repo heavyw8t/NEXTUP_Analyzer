@@ -214,6 +214,69 @@ When this skill identifies an issue:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Copy ability on receipt struct enables repeated redemption (double-spend)
+  Where it hit: bridge / `claim_native` and `return_native` functions
+  Severity: MEDIUM
+  Source: Solodit (row_id 2656)
+  Summary: Users could swap wrapped tokens for native tokens and back repeatedly within the same chain. Because the swap receipt carried no single-use enforcement (equivalent to a `copy`-able receipt), attackers could exhaust the treasury by cycling mints and burns at negligible cost. The fix removes in-chain wrap/unwrap, forcing cross-chain paths that impose economic friction.
+  Map to: ability, copy, copy_allows_duplicate_resource
+
+- Pattern: Obligation struct (UnstakeTicket) created without enforcing consumption, blocking user reclaim
+  Where it hit: native_pool / `burn_ticket_non_entry`
+  Severity: MEDIUM
+  Source: Solodit (row_id 9957)
+  Summary: `burn_ticket_non_entry` collects SUI for returns but ignores coins held in `NativePool::pending`. Because the ticket struct did not enforce a complete cleanup path before destruction (analogous to a droppable obligation), pending balances were silently omitted from the returned amount. Fix: include pending coins during the unstake flow.
+  Map to: ability, drop, drop_ability_bypasses_cleanup
+
+- Pattern: UnstakeTicket for oversized stake can be dropped without consuming pending epoch balance
+  Where it hit: native_pool / unstake path
+  Severity: MEDIUM
+  Source: Solodit (row_id 9958)
+  Summary: A user creating an UnstakeTicket for a large stake could find the ticket un-consumable in the current epoch because a guard condition prevented processing. The ticket could then be abandoned (dropped) without releasing the locked stake, leaving protocol state inconsistent. Fix: remove the blocking condition and set a minimum value floor.
+  Map to: ability, drop, drop_ability_bypasses_cleanup
+
+- Pattern: Vault share struct lacks `key` ability isolation, allowing zero-share deposit to pass silently
+  Where it hit: bluefin_vault / deposit and withdrawal logic
+  Severity: HIGH
+  Source: Solodit (row_id 8567)
+  Summary: When `vault_total_balance` is zero the share calculation block is skipped entirely, so a depositor receives zero shares but the funds are accepted. This is equivalent to a struct that is missing a mandatory `key`-level guard: the resource lifecycle check (assert shares > 0) was absent. Users lose deposited funds with no error. Fix: add minimum share enforcement (0.1 USD floor) and assert non-zero shares and amounts.
+  Map to: ability, key, missing_key_ability
+
+- Pattern: Stake amount mutated before reward accumulator update, allowing flash-loan to claim inflated rewards
+  Where it hit: THL coin rewards / extra-rewards accounting
+  Severity: HIGH
+  Source: Solodit (row_id 11639)
+  Summary: The protocol updated the staked amount before snapshotting the per-user accumulator for extra rewards. A malicious user could flash-loan a large deposit, then claim rewards calculated on the inflated balance. This is structurally identical to a `copy`-and-reuse attack: the value-bearing stake quantity was observable at two points in the same transaction with inconsistent state. Fix: update the accumulator before modifying stake amount.
+  Map to: ability, copy, copy_allows_duplicate_resource
+
+- Pattern: `give_coin` tracks outflow instead of inflow for interchain token receipts, corrupting flow accounting
+  Where it hit: CoinManagement / `give_coin`
+  Severity: HIGH
+  Source: Solodit (row_id 6915)
+  Summary: `give_coin` called `add_flow_out` when it should have called `add_flow_in` during interchain token receipt. The coin management struct therefore carried incorrect directional state, which is equivalent to a resource whose `store`-ability allows it to be placed in a context (inbound flow) while its internal accounting fields are set for the opposite context (outbound flow). Downstream rate-limit and balance checks operated on wrong data. Fix: replace `add_flow_out` with `add_flow_in` in the receive path.
+  Map to: ability, store, unintended_has_store
+
+- Pattern: Signature struct accepts arbitrary `city` parameter with no type-level constraint, enabling cross-context reuse
+  Where it hit: drife_app / `request_ride`
+  Severity: MEDIUM
+  Source: Solodit (row_id 9416)
+  Summary: The signature used in `request_ride` had no strict format constraint on the `city` field, allowing an attacker to substitute any city value and obtain a valid signature for unintended operations. This is equivalent to a generic type parameter with an overly permissive ability constraint: the struct accepted any value in that slot, breaking the invariant that a signature is bound to a specific context. Fix: prepend a domain-specific string to every signature to restrict its usage scope.
+  Map to: ability, generic_ability, ability_constraint_mismatch
+
+- Pattern: Sui object UID reuse bypassed via upgrade model, defeating key-ability uniqueness
+  Where it hit: sui-verifier / `id_leak_verifier`
+  Severity: HIGH
+  Source: Solodit (row_id 11775)
+  Summary: The `id_leak_verifier` checks that object UIDs (Move `key`-ability resources) are not reused, but the check can be circumvented by adding new capabilities during a package upgrade. The verifier did not validate structs that lacked a `Key` capability in the upgraded version, and objects could be passed between package versions, allowing UID reuse. This breaks the foundational invariant that a `key` resource is a unique, address-bound singleton. Fix: verify all structs across upgrade boundaries regardless of current capability set.
+  Map to: ability, key, missing_key_ability, acquires
+
+
 ## Step Execution Checklist (MANDATORY)
 
 > **CRITICAL**: You MUST report completion status for ALL sections. Steps 2 and 6 are highest priority.

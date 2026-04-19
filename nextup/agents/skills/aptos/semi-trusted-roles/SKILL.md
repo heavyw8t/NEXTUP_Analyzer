@@ -251,6 +251,76 @@ For each function callable by admin or equivalent role:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+---
+
+- Pattern: Operator bypasses an on-chain price deviation check by routing a swap through an unrelated pool controlled by the operator, then backruns to extract vault funds.
+  Where it hit: Arrakis `SimpleManager` contract, `rebalance` function
+  Severity: HIGH
+  Source: Solodit (row_id 11230)
+  Summary: The operator passes a whitelisted router address but targets a pool of tokens it controls. The price deviation check passes because it measures the wrong pool. The operator then executes a large swap in the actual UniV3 pool and backruns to drain the vault. The exploit is self-funded via flash loan. Fix: enforce the price deviation check immediately before liquidity is added, not before the swap.
+  Map to: operator
+
+---
+
+- Pattern: Any user agent (UA) can send messages to any endpoint via the relayer, not just the designated bridge UA, enabling DoS and fund freeze.
+  Where it hit: LayerZero-style bridge relayer, UA message routing
+  Severity: HIGH
+  Source: Solodit (row_id 14767)
+  Summary: The relayer does not isolate message channels per UA. A malicious UA floods a target endpoint with crafted messages, causing the bridge to freeze and legitimate cross-chain transfers to stall. Recovery requires a protocol-level redesign of channel isolation. Fix: redesign the relayer to enforce per-UA channel separation; warn application developers to validate the source UA.
+  Map to: relayer
+
+---
+
+- Pattern: Relayer accepts an unbounded `_toAddress` bytes parameter, allowing an oversized payload to break cross-chain message delivery on destination chains with lower gas limits.
+  Where it hit: `OFTCore#sendFrom`, LayerZero OFT bridge
+  Severity: HIGH
+  Source: Solodit (row_id 13517)
+  Summary: A malicious user passes a `_toAddress` of arbitrary size. On the destination chain the message cannot execute due to gas exhaustion, causing the nonce to advance on the source but the action to fail permanently on the destination. Funds are unrecoverable without a stored-message retry. Fix: bound `_toAddress` length (e.g., 32 bytes for Aptos/Solana addresses) at the sending endpoint.
+  Map to: relayer
+
+---
+
+- Pattern: A semi-trusted role holding a `WithdrawCap` capability can execute withdrawals even while the protocol is in a paused state, because the pause guard only covers deposit functions.
+  Where it hit: `gateway.move`, `withdraw_impl` function
+  Severity: MEDIUM
+  Source: Solodit (row_id 1579)
+  Summary: The deposit path checks a `paused` flag; `withdraw_impl` does not. A `WithdrawCap` holder (or a compromised key) can drain gateway vault balances while legitimate deposits are blocked. The inconsistency also makes the pause invariant impossible to reason about. Fix: add a `paused` check to `withdraw_impl` that mirrors the deposit guard.
+  Map to: operator, semi_trusted
+
+---
+
+- Pattern: Move market functions do not validate that the coin types supplied by the caller match the market's registered types, letting an attacker substitute tokens to manipulate order execution.
+  Where it hit: `market::place_market_order` and `market::place_limit_order` in a Move DEX
+  Severity: HIGH
+  Source: Solodit (row_id 13757)
+  Summary: The module owner's type parameters for a market are stored at initialization, but per-call coin types are accepted without comparison. An attacker passes incorrect coin types, causing coins to be transferred from an unintended reserve or creating phantom liquidity. Fix: assert that the type arguments on each call match the types stored in the market resource.
+  Map to: module_owner, operator
+
+---
+
+- Pattern: Keeper (staking pool crank) computes the operator commission using the *new* commission rate for the current epoch instead of the rate that was in effect at epoch start, causing systematic over- or under-payment.
+  Where it hit: `staking_pool::advance_epoch`, Move staking module
+  Severity: MEDIUM
+  Source: Solodit (row_id 2278)
+  Summary: When the operator changes the commission rate mid-epoch the next `advance_epoch` call applies the new rate retroactively to the whole epoch. Operators can increase their rate just before epoch close to extract additional yield from delegators. Fix: snapshot the commission rate at epoch start and use that snapshot in `advance_epoch`.
+  Map to: keeper, operator
+
+---
+
+- Pattern: A privileged crank function (`certify_event_blob`) accepts an `ending_checkpoint_sequence_num` parameter with no on-chain validation, allowing a node to record a mismatched blob ID and checkpoint, corrupting event-blob tracking state.
+  Where it hit: `certify_event_blob` in a Move node-coordination module
+  Severity: MEDIUM
+  Source: Solodit (row_id 2279)
+  Summary: The node (acting as a trusted crank) supplies the blob ID and checkpoint number together. Because neither is cross-checked against the other on-chain, a faulty or malicious node can certify an incorrect pairing. Downstream consumers of the certified state will diverge from actual chain history. Fix: track both the blob ID and the ending checkpoint together and validate consistency at certification time.
+  Map to: keeper, semi_trusted
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Step | Required | Completed? | Notes |

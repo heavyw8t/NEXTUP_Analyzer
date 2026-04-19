@@ -100,6 +100,95 @@ For each finding, specify:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+Source: candidates.jsonl (94 rows). Selected 8 findings covering all six distinct sub-buckets.
+
+---
+
+## Example 1
+
+bucket: first_depositor
+severity: HIGH
+row_index: 2214
+summary: SheepDog contract — attacker calls `protect` with 1 wei, then transfers a large token amount directly to the contract. Total balance inflates without touching totalShares. Subsequent depositors receive 0 shares due to rounding. Attacker waits the 2-day withdrawal delay and claims the entire pool.
+why_selected: Cleanest canonical first-depositor + donate-inflate sequence with explicit rounding-to-zero outcome and concrete withdrawal path. Fix: dead-shares mint or minimum initial deposit.
+
+---
+
+## Example 2
+
+bucket: share_inflation
+severity: HIGH
+row_index: 10301
+summary: StakePet contract — creator deposits a small amount to obtain 1 share unit, then sends a large collateral amount directly to the contract. Each subsequent depositor receives 0 ownership shares because the single share now represents enormous collateral. Complete loss of deposited funds for victims. Fix: Uniswap V2 dead-shares pattern (burn minimal liquidity to null address).
+why_selected: Explicitly tagged "Vault; Share Inflation; Initial Deposit; First Depositor Issue". Covers the creator-as-attacker variant and references the accepted mitigation pattern.
+
+---
+
+## Example 3
+
+bucket: donation_attack
+severity: HIGH
+row_index: 3467
+summary: ClaggAaveAdapter / ClaggBaseAdapter — `compound()` sets totalLiquidity to the current aToken balance. An attacker donates aTokens directly to the contract, inflating totalLiquidity and totalSupply independently, causing other users to lose shares. Fix: mint dead shares on first deposit (10 000 dead shares added post-fix).
+why_selected: Demonstrates the donation vector via rebasing/receipt tokens rather than plain ERC20 transfer, and shows how `compound()` as the accounting reset point is the real root cause.
+
+---
+
+## Example 4
+
+bucket: dead_shares
+severity: HIGH
+row_index: 2594
+summary: AutoCompoundingPodLp — dead shares are minted to `msg.sender` instead of a dead address. The deployer retains those shares and can withdraw them, reversing the inflation-protection guarantee entirely. Attack path: frontrun deployment, inflate totalAssets, withdraw leaving 2 shares, then profit from victim's deposit rounding.
+why_selected: Precisely isolates the dead-shares mitigation failure mode: correct intent, wrong recipient. Useful contrast against Example 2 to show that implementing dead shares to msg.sender provides no real protection.
+
+---
+
+## Example 5
+
+bucket: rounding
+severity: HIGH
+row_index: 2647
+summary: Fraxlend lending pairs — rounding direction when minting/burning shares is exploitable: attacker manipulates rounding to inflate the value of a single share and steals 100% of the first deposit. Exploitable only in newly created pairs. Fix: deployer makes an initial deposit into each new pair before opening to users.
+why_selected: Tagged explicitly as a rounding-direction finding in a lending context. Shows that rounding-down-favors-protocol can be inverted to favor attacker when totalSupply is 0.
+
+---
+
+## Example 6
+
+bucket: share_dilution
+severity: HIGH
+row_index: 1656
+summary: Closure contract — `valueStaked` is updated before tax earnings are distributed. The new LP's deposit is counted in the denominator before they are entitled to the current round of taxes, diluting the share of earnings that existing LPs should receive. Happens on every single-sided liquidity add. Fix: distribute tax before updating valueStaked.
+why_selected: Clean share-dilution-on-fee-accrual pattern caused by update ordering, not inflation. Distinct from donate attacks. Concrete on-chain trigger (every single-sided add) makes it high-likelihood.
+
+---
+
+## Example 7
+
+bucket: share_rate_manipulation
+severity: HIGH
+row_index: 14112
+summary: AutoPxGmx ERC4626 vault — Alice deposits 1 wei, then sends 10e18 - 1 pxGMX directly to the vault via ERC20 transfer, setting share price to 10 pxGMX per share. Bob deposits 19 pxGMX and gets only 1 share due to `convertToShares` rounding. Both redeem at 14.5 pxGMX each, so Bob loses ~4.5 pxGMX net (less withdrawal fee). Mitigations: high minimum first deposit, dead shares, or seed pools at deployment.
+why_selected: Textbook share-rate-manipulation via direct ERC20 transfer with quantified victim loss and explicit per-share arithmetic. Good for agent pattern-matching against `convertToShares` / `totalAssets` based vaults.
+
+---
+
+## Example 8
+
+bucket: share_dilution
+severity: MEDIUM
+row_index: 8824
+summary: Covalent staking — reward distribution uses the total staked balance at the moment of distribution, including stakes placed after the relevant epoch began. An attacker front-runs the staking manager's distribution call, stakes, receives a full-epoch reward, then unstakes and repeats with the same capital. Existing stakers' share of each epoch's reward is diluted. Fix: checkpoint-based share accounting per epoch.
+why_selected: Represents the late-entry / new-staking-dilutes-existing-stakers variant of share dilution in a staking (not ERC4626) context. Distinct root cause from Example 6: not an ordering bug but a missing time-weight checkpoint.
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Step | Required | Completed? | Notes |

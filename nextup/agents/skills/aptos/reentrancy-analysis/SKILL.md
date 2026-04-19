@@ -213,6 +213,69 @@ For each reentrancy vector found, categorize the recommended fix:
 **Who Benefits**: [Who can use these]
 ```
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: ERC-777 `tokensReceived` hook allows malicious token holder to reenter and block migration indefinitely
+  Where it hit: VariableSupplyToken / `mint()` calling `tokensReceived` hook
+  Severity: HIGH
+  Source: Solodit (row_id 18768)
+  Summary: After a fix attempt, `mint` was modified to call the ERC-777 `tokensReceived` hook before setting `isMigratingFromLegacy = false`. A malicious token holder whose contract implements `tokensReceived` can reenter the mint path and repeatedly revert the migration, permanently blocking the flag from clearing. The CEI ordering violation — dispatching the hook before finalizing migration state — is the root cause. The fix is to complete all state writes before invoking external hooks or to avoid calling the ERC-777 hook during migration.
+  Map to: reentrancy, callback, CEI_violation
+
+- Pattern: ERC-777 sending/receiving hooks disabled by BWGToken, breaking hook-dependent contracts and creating silent reentrancy assumption
+  Where it hit: BWGToken / `StorageOperator.batchSend()` and `_beforeTokenTransfer()` hook
+  Severity: HIGH
+  Source: Solodit (row_id 12082)
+  Summary: BWGToken disabled ERC-777 hooks while downstream contracts (StorageOperator) assumed they were active. Any contract on the `costableList` that implements a sending hook causes `batchSend` to revert when triggered by `_beforeTokenTransfer`. The underlying design defect is trusting external hook callbacks without a module-level guard against reentry; when hooks fire unexpectedly, an adversary-controlled receiver hook can preempt the batch logic. The recommended fix is to either enforce that hooks are never called or follow OpenZeppelin's ERC-777 guard pattern.
+  Map to: reentrancy, callback, back_call
+
+- Pattern: Double release of tokens in `acquireConviction()` — transfer executes before clearing the locked-token record
+  Where it hit: ERC20ConvictionScore.sol / `acquireConviction()` line 316
+  Severity: HIGH
+  Source: Solodit (row_id 17867)
+  Summary: When a user acquires a conviction score back from an NFT, the function first releases locked FSD tokens via the NFT's internal transfer, then unconditionally transfers the same amount again from the protocol on line 316. State (locked balance cleared) is not updated before the second transfer dispatches, so the protocol pays out twice. This is a CEI violation: the interaction (first transfer) completes, the locked-token record is not zeroed, and a second interaction fires against the same record. The fix is to remove the redundant transfer on line 316.
+  Map to: CEI_violation, reentrancy, back_call
+
+- Pattern: `give_coin` uses `add_flow_out` instead of `add_flow_in` during interchain receive, corrupting flow accounting
+  Where it hit: CoinManagement (Move) / `give_coin()`
+  Severity: HIGH
+  Source: Solodit (row_id 6915)
+  Summary: `give_coin` is invoked when the protocol receives tokens via an interchain transfer. It calls `add_flow_out` (outflow tracking) instead of `add_flow_in` (inflow tracking). The result is that every incoming token batch is booked as an outflow, causing the flow limiter to allow double the intended outbound volume. In an `acquires`-annotated Move function, this means the global resource for flow limits is mutably borrowed and updated with the wrong direction, leaving the resource in a permanently inconsistent state after each cross-chain receipt. The fix is to call `add_flow_in` for received tokens.
+  Map to: acquires, CEI_violation, back_call
+
+- Pattern: Blacklist restriction in `sdeusd.move` bypassed by specifying a non-blocked receiver address
+  Where it hit: sdeusd.move / staking and mint restriction logic
+  Severity: MEDIUM
+  Source: Solodit (row_id 671)
+  Summary: Full and soft restrictions are supposed to prevent blacklisted users from staking or receiving newly minted sdeUSD. The restriction checks only validate the caller's address, not the receiver address passed as a parameter. A blacklisted user can stake by nominating an unblocked address as the receiver, and newly minted sdeUSD can still land at a fully blacklisted address within the current epoch. In Move terms, the `acquires` path that writes the restricted-user resource does not gate on the receiver's restriction status, only the signer's. The fix is to add restriction checks for both caller and receiver in each relevant code path.
+  Map to: acquires, CEI_violation
+
+- Pattern: `gulp_emissions()` allows a removed pool to continue accumulating Blend token emissions
+  Where it hit: Blend Protocol / `Backstop` contract / `update_rz_emis_data()`
+  Severity: MEDIUM
+  Source: Solodit (row_id 775)
+  Summary: After a pool is removed from the reward zone, `gulp_emissions()` can still be called for it. The `update_rz_emis_data` function does not check whether the pool is in the reward zone before crediting emissions, so a removed pool continues to drain the emission budget. This is a back-call pattern: an external call (`gulp_emissions`) reaches back into reward-zone state that should be inaccessible post-removal, because the state transition (pool removal) did not revoke the pool's ability to trigger that code path. The fix is to gate `update_rz_emis_data` on active reward-zone membership.
+  Map to: back_call, CEI_violation
+
+- Pattern: `request_withdraw_stake` in `staking_pool.move` rounds withdrawn token count to zero for small amounts
+  Where it hit: staking_pool.move / `request_withdraw_stake()`
+  Severity: MEDIUM
+  Source: Solodit (row_id 11772)
+  Summary: The function divides the requested withdrawal by a pool ratio before recording the amount. For small inputs the integer division truncates to zero, so the function records a zero-token withdrawal and returns successfully without transferring anything. An attacker can use this to grief the accounting: repeated zero-amount withdrawal requests update internal counters without actually moving tokens, creating a mismatch between the recorded pending-withdrawal state and the actual pool balance. The acquires pattern on the pool resource is exercised every call, so the resource lock is repeatedly obtained and released with no net effect. The fix is to assert that the computed token count is non-zero before proceeding.
+  Map to: acquires, CEI_violation
+
+- Pattern: `release` in `token_vesting.move` transfers vested funds to the transaction sender instead of the whitelisted beneficiary
+  Where it hit: token_vesting.move / `release()`
+  Severity: HIGH
+  Source: Solodit (row_id 12643)
+  Summary: The function validates the whitelisted address and computes the vested amount correctly, but the subsequent transfer sends tokens to the signer (caller) rather than to the validated receiver address. Any caller who can invoke `release` receives tokens intended for the beneficiary. In Move's `acquires` model, the vesting resource is borrowed mutably, the vested amount is deducted from the locked balance, and the transfer fires to the wrong address — the resource update is committed but the funds land in the wrong account. The fix is to either enforce that the signer matches the beneficiary or pass the beneficiary address directly to the transfer call.
+  Map to: acquires, CEI_violation
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Step | Required | Completed? | Notes |

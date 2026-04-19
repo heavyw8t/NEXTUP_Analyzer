@@ -202,6 +202,83 @@ For each oracle, model failure scenarios:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: Chainlink `updatedAt` staleness check inverted — always fails, blocking price feed
+  Where it hit: TokenBridge.Base.sol / `getChainlinkDataFeedLatestAnswer()`
+  Severity: HIGH
+  Source: Solodit (row_id 4037)
+  Summary: The function compares `updatedAt` against `block.timestamp` with an inverted condition, causing the staleness check to always fail and the contract to revert on every price query. The fix is to compare `block.timestamp - updatedAt` against the allowed staleness window. Missing sequencer uptime and per-feed threshold checks are also noted.
+  Map to: oracle, chainlink, staleness, AggregatorV3, price_feed
+
+- Pattern: Chainlink price feed used without staleness check or negative-price guard (L2 deployment)
+  Where it hit: Sperax / `contracts/oracle/ChainlinkOracle.sol`
+  Severity: HIGH
+  Source: Solodit (row_id 8887)
+  Summary: `ChainlinkOracle` on Arbitrum did not verify that `updatedAt` is recent or that the returned `int256` price is positive. A stale or negative feed value propagates into collateral calculations without rejection. The fix adds a configurable per-pair timeout and explicit sign validation on the returned price.
+  Map to: oracle, chainlink, staleness, AggregatorV3, price_feed, deviation
+
+- Pattern: PushOracle stores base/quote prices with no timestamp, enabling indefinitely stale quotes
+  Where it hit: PushOracle contract / price setter
+  Severity: HIGH
+  Source: Solodit (row_id 3174)
+  Summary: The oracle's price-setter writes values with no associated timestamp, so consuming contracts have no way to detect how old a stored price is. An inactive or compromised feeder results in stale prices being used for settlement indefinitely. The fix is to record a timestamp alongside every price update and require consuming contracts to reject data older than a configured heartbeat.
+  Map to: oracle, price_feed, staleness
+
+- Pattern: Redstone push-oracle price can be manipulated within a 3-minute acceptance window
+  Where it hit: CoreSaltyFeed / Redstone Oracle integration
+  Severity: HIGH
+  Source: Solodit (row_id 4883)
+  Summary: The protocol accepted any Redstone price update within a 3-minute window without a delay or TWAP buffer. An attacker can repeatedly post manipulated prices at low cost, enabling sandwich attacks on liquidation or swap paths. The recommended fix is to introduce a minimum time delay between accepted price updates or require multiple confirmations before a new price takes effect.
+  Map to: oracle, price_feed, deviation, staleness
+
+- Pattern: Uniswap V3 TWAP window of 10 seconds is manipulable within a single block
+  Where it hit: AFiOracle / `estimateAmountOutMin()`
+  Severity: HIGH
+  Source: Solodit (row_id 9157)
+  Summary: The TWAP oracle uses a 10-second observation window, which is shorter than a single Ethereum block interval, meaning the weighted-average price is effectively equivalent to a spot price and is trivially manipulable by a flash-loan swap. The window was increased to 900 seconds as the fix.
+  Map to: oracle, price_feed, staleness
+
+- Pattern: Uniswap V3 pool's observation cardinality too low to support the TWAP window, causing DoS
+  Where it hit: Ion Protocol / `SwEthSpotOracle` for swETH
+  Severity: HIGH
+  Source: Solodit (row_id 8908)
+  Summary: `SwEthSpotOracle` queries a TWAP over a window longer than the pool's initialized observation cardinality supports. The `observe()` call reverts whenever the cardinality is insufficient, blocking any user action that depends on this oracle and potentially triggering unintended liquidations. The pool's cardinality must be increased to match the intended window before the oracle can be used safely.
+  Map to: oracle, price_feed, staleness
+
+- Pattern: Oracle returns 1e18-precision price but all consumers hardcode 1e8 expectation, inflating every calculation
+  Where it hit: Dopex / `RdpxEthPriceOracle` consumed by `RdpxV2Core`, `UniV2LiquidityAmo`, `PerpetualAtlanticVault`
+  Severity: HIGH
+  Source: Solodit (row_id 10531)
+  Summary: `RdpxEthPriceOracle.getRdpxPriceInEth()` and `getLpPriceInEth()` return values with 18-decimal precision, but the three consuming contracts treat the result as 8-decimal, inflating `rdpxAmountInWeth`, min token amounts, and premium calculations by a factor of 1e10. The fix is to normalize the oracle output to the precision consumers expect, or update all consumers to handle 1e18.
+  Map to: oracle, price_feed, chainlink, deviation
+
+- Pattern: Wrong decimal assumption on Chainlink feed — 18-decimal result scaled up by extra 1e10, inflating price 1e10x
+  Where it hit: USSD / `StableOracleDAI.getPriceUSD()`
+  Severity: HIGH
+  Source: Solodit (row_id 11812)
+  Summary: The function assumes the Chainlink DAI/ETH feed returns 8 decimals and multiplies by `1e10` to normalize to 18 decimals. The actual feed returns 18 decimals, so the result is 28-decimal and the DAI price is inflated by 1e10. Users can mint 1e10x more USSD than intended. The fix is to remove the `* 1e10` scaling.
+  Map to: oracle, chainlink, price_feed, AggregatorV3
+
+- Pattern: Wrong base/quote token passed to Uniswap TWAP and variable-decimal return corrupts USD price
+  Where it hit: Beanstalk / `LibUsdOracle.getUsdPrice()` and `LibChainlinkOracle.getTokenPrice()`
+  Severity: HIGH
+  Source: Solodit (row_id 5941)
+  Summary: `LibUsdOracle` uses the wrong token as the base in the Uniswap TWAP query, producing an inverted price, and `getTwap()` returns values with varying decimal precision depending on the pair, so downstream arithmetic is inconsistent. A second issue in `getTokenPrice` causes the instantaneous price to always be returned regardless of the `lookback` parameter. Together these bugs corrupt DeltaB, peg calculations, and all components that derive from USD price.
+  Map to: oracle, price_feed, chainlink, staleness
+
+- Pattern: Balancer BPT oracle reads pool token balances inside a read-only reentrancy, enabling flash-loan price manipulation
+  Where it hit: Blueberry / `BalancerPairOracle.getPrice()` calling `BalancerVault.getPoolTokens()`
+  Severity: HIGH
+  Source: Solodit (row_id 12140)
+  Summary: `getPrice()` calls `BalancerVault.getPoolTokens()` without checking the Vault's reentrancy guard. During the execution of a flash loan the Vault's internal balances are mid-update, so the oracle returns a manipulated price. An attacker can use this to trigger premature liquidations of user positions. The fix is to invoke the Balancer-provided reentrancy guard before querying pool token data.
+  Map to: oracle, price_feed, deviation
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

@@ -192,6 +192,105 @@ When this skill identifies an issue:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+Selected from `candidates.jsonl` (500 capped from 724). Distinct mechanisms prioritised; duplicates dropped; HIGH preferred.
+
+---
+
+- Pattern: fee-on-transfer token mishandling
+  Where it hit: `LOB.receiveTokens()` — contract credits the pre-transfer amount rather than measuring actual received balance after `safeTransferFrom`, causing accounting to record more tokens than arrived
+  Severity: HIGH
+  Source: Solodit (row_id 1563)
+  Summary: Protocol uses the input parameter directly as the credited amount without comparing pre- and post-transfer balances. For any token that deducts a fee on transfer the internal ledger overstates the deposit, producing inflated balances. An attacker can withdraw more than deposited or drain the pool over time.
+  Map to: transferFrom, fee_on_transfer
+
+---
+
+- Pattern: fee-on-transfer token mishandling (revert path)
+  Where it hit: `Swappee.swappee()` — balance snapshot taken before `transferFrom`, then the pre-fee amount is forwarded to Uniswap, which reverts because the contract holds less than it tries to swap
+  Severity: MEDIUM
+  Source: Solodit (row_id 1696)
+  Summary: Contract captures `amount` from the call argument and later calls the router with the same figure. When a FOT token reduces the received amount the downstream approval and swap fail on insufficient balance. The fix is to measure `balanceOf(this)` before and after and use the delta.
+  Map to: transferFrom, fee_on_transfer
+
+---
+
+- Pattern: rebasing token accounting — missed yield accrual
+  Where it hit: `EnjoyoorsVaultDeposits._deposit()` — vault records the deposited nominal amount; rebasing token grows the contract balance over time but the extra yield is never credited to users
+  Severity: HIGH
+  Source: Solodit (row_id 2104)
+  Summary: The vault tracks absolute token amounts at deposit time. As the rebasing token increases every holder's balance the difference between the tracked amount and actual `balanceOf(this)` grows permanently. Users who withdraw later receive only their original nominal amount, leaving the accrued yield stranded.
+  Map to: rebasing, transfer
+
+---
+
+- Pattern: rebasing token in withdrawal queue — snapshot stale at claim time
+  Where it hit: `WithdrawQueue.withdraw()` — stores `amountToRedeem` in stETH terms at request time; by claim time the rebasing balance may have decreased, causing the transfer to revert or the queue to under-distribute
+  Severity: HIGH
+  Source: Solodit (row_id 6968)
+  Summary: The protocol locks a fixed stETH amount at withdrawal request time. stETH rebases continuously; a downward rebase between request and claim makes the stored amount exceed the contract's real balance, reverting the claim. An upward rebase silently forfeits the surplus to the protocol. The mitigation is to store and transfer shares rather than a nominal amount.
+  Map to: rebasing, transfer
+
+---
+
+- Pattern: safeTransfer vs transfer — non-standard ERC20 (USDT returns void)
+  Where it hit: `Treasury.sol` — uses raw `transfer` / `transferFrom` with USDT; USDT returns no bool, so the call succeeds at the EVM level but the Solidity ABI decoder treats the missing return value as a revert in strict-mode compilers
+  Severity: HIGH
+  Source: Solodit (row_id 6091)
+  Summary: Treasury interacts with USDT using ERC-20's `transfer` and `transferFrom`. USDT on mainnet does not return a boolean. Contracts compiled with Solidity >=0.8 that decode the return value revert on every USDT call, bricking fee collection and withdrawals. Wrapping calls in `SafeERC20.safeTransfer` eliminates the return-value decode step.
+  Map to: transfer, safeTransfer, non_standard_ERC20
+
+---
+
+- Pattern: safeTransfer vs transfer — Solmate SafeTransferLib no-code check missing
+  Where it hit: `StakingRewards` vault initialisation — Solady/Solmate `safeTransfer` skips the code-existence check; attacker predicts a future token address and stakes before deployment, minting shares with a silent no-op transfer
+  Severity: HIGH
+  Source: Solodit (row_id 3657)
+  Summary: Solady's `safeTransfer` does not assert the target has deployed code. An attacker computes the future token address (e.g. a CREATE2 Uniswap pair), stakes before deployment, and the transfer silently succeeds while `totalSupply` increases. When the real token deploys the attacker holds diluted-for-free shares. The fix is to check `address(token).code.length > 0` on initialisation.
+  Map to: safeTransfer, non_standard_ERC20
+
+---
+
+- Pattern: transferFrom approval race / arbitrary-from attack
+  Where it hit: `StakingKo.deligateStake()` — passes an attacker-controlled address as the `from` parameter to `transferFrom`, allowing the caller to drain any address that has approved the contract
+  Severity: HIGH
+  Source: Solodit (row_id 2175)
+  Summary: The delegate-stake path accepts an arbitrary `from` address and calls `token.transferFrom(from, contract, amount)`. Any account that has outstanding approval to the staking contract can be drained by a front-runner supplying that account as `from`. The fix is to use `msg.sender` as the source in all `transferFrom` calls.
+  Map to: transferFrom
+
+---
+
+- Pattern: transferFrom approval race — permit2 token mismatch
+  Where it hit: `V3Vault.sol` — three `permit2.permitTransferFrom()` calls never validate that `TokenPermissions.token` equals the vault's accepted asset, so a user's permit for any ERC-20 is accepted as USDC collateral
+  Severity: HIGH
+  Source: Solodit (row_id 8104)
+  Summary: Permit2's `permitTransferFrom` enforces the caller-supplied `TokenPermissions` but the vault never checks that the token in those permissions matches its own asset. An attacker crafts a permit for a worthless token, deposits it, and borrows against real USDC collateral they did not supply. The fix adds a token-equality check before accepting the permit.
+  Map to: transferFrom, non_standard_ERC20
+
+---
+
+- Pattern: token with callback hook (ERC777 / ERC1363) — reentrancy via transfer hook
+  Where it hit: `LOB` — ERC-20 tokens with send/receive hooks let an attacker reenter external functions; the report classifies this as critical because trader balance is updated after the external transfer call
+  Severity: HIGH
+  Source: Solodit (row_id 1567)
+  Summary: The contract transfers tokens to an attacker-controlled address before updating the sender's internal balance. A token implementing `tokensReceived` (ERC777) or `onTransferReceived` (ERC1363) triggers the attacker's fallback mid-execution. The attacker re-enters the same function, double-spends the in-flight amount, and exits with double the tokens. CEI ordering and `nonReentrant` both fix this.
+  Map to: transfer, transferFrom
+
+---
+
+- Pattern: self-transfer accounting exploit — rewards drained via transfer-to-self
+  Where it hit: `ResolvStakingV2` — user transfers staking tokens to themselves; internal accounting credits the full reward snapshot again without any net token movement
+  Severity: HIGH
+  Source: Solodit (row_id 799)
+  Summary: The transfer handler updates reward checkpoints as though a real balance change occurred. A self-transfer (sender == recipient) triggers the checkpoint update with no actual movement of funds, resetting the reward accumulator in the caller's favour. Repeating this in a loop drains all pending rewards from other stakers. The fix is to add `require(from != to)` in the transfer hook.
+  Map to: transfer, transferFrom
+
+
 ## Step Execution Checklist (MANDATORY)
 
 > **CRITICAL**: You MUST report completion status for ALL sections. Findings with incomplete sections will be flagged for depth review.

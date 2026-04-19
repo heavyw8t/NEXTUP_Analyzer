@@ -107,6 +107,103 @@ Document emergency/pause capabilities:
 **Recommendation**: How to mitigate (add timelock, separate roles, add guardian)
 ```
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+---
+
+- Pattern: Upgradeable contract missing `onlyOwner` on `_authorizeUpgrade`, allowing any caller to upgrade to a malicious implementation and drain all funds.
+  Where it hit: `WellUpgradeable` contract, `_authorizeUpgrade` function
+  Severity: HIGH
+  Source: Solodit (row_id 5359)
+  Summary: The `WellUpgradeable` contract omits the `onlyOwner` modifier on `_authorizeUpgrade`, so any address can upgrade the proxy to a malicious implementation. Total fund loss for all wells deployed in the system is the worst-case outcome. Fix: add `onlyOwner` to `_authorizeUpgrade`.
+  Map to: onlyOwner, upgrade_authority
+
+---
+
+- Pattern: Single governance EOA holds all privileged roles (register products, set economic params, change yield providers, grant/revoke roles) with no separation or timelock. Compromise of that one address lets an attacker drain the protocol.
+  Where it hit: Atlendis Labs lending protocol, `governance` role across pool contracts
+  Severity: HIGH
+  Source: Solodit (row_id 12227)
+  Summary: The governance address is the single point of failure for every critical operation in the protocol: it can change yield providers to an attacker-controlled contract and steal all funds. No separation of duties and no timelock are present. Short-term fix: split privileges; long-term: add timelock and incident response plan.
+  Map to: onlyOwner, admin_drain, timelock_bypass
+
+---
+
+- Pattern: Owner-controlled `emergencyWithdraw` (or equivalent drain function) callable at any time with no timelock, allowing the owner to pull all user funds instantly.
+  Where it hit: `Insure` project, `Vault.setController()` + `utilize()`
+  Severity: HIGH
+  Source: Solodit (row_id 16765)
+  Summary: The vault owner can call `setController()` to point to a malicious contract, then call `utilize()` to transfer the full vault balance there. No timelock guards `setController`. Fix: disallow changing an already-set controller, or require a timelock before the change takes effect.
+  Map to: onlyOwner, admin_drain, timelock_bypass
+
+---
+
+- Pattern: Owner can change critical protocol parameters (fee percentages, exchange addresses) instantly without a timelock, enabling sandwich or front-run attacks on users.
+  Where it hit: PancakeSwap Compounding Strategy (`gulp`, `setDepositFee`, `setExchange`), BakerFi
+  Severity: HIGH
+  Source: Solodit (row_id 17816)
+  Summary: The contract owner can raise deposit fees from 0 to 5% or swap in a malicious exchange address immediately before a large `gulp` call, extracting tokens from the strategy. A timelock on parameter changes would give users time to exit. Fix: add a timelock before any fee or address update takes effect.
+  Map to: onlyOwner, timelock_bypass
+
+---
+
+- Pattern: Timelock bypass: governor can replace itself or set delay to zero in a single untimelocked transaction, gaining unrestricted minting or upgrade authority immediately.
+  Where it hit: Malt Finance `Timelock` contract, `setGovernor` / `setDelay`
+  Severity: HIGH
+  Source: Solodit (row_id 17098)
+  Summary: The governor calls `Timelock.setGovernor(attacker)` effective immediately, then the new governor sets `delay = 0`, removing all timelock protection. The governor can then mint unlimited MALT. Fix: make `setGovernor` and `setDelay` callable only from `address(this)` so they must go through the timelock queue.
+  Map to: timelock_bypass, upgrade_authority
+
+---
+
+- Pattern: Community Multisig (CM) can use `delegatecall` to bypass protocol-level access control guards, gaining unrestricted control over the entire protocol.
+  Where it hit: `GuardCM` contract
+  Severity: HIGH
+  Source: Solodit (row_id 9224)
+  Summary: The guard restricts CM actions to specific contracts and methods but does not block `delegatecall` to arbitrary addresses (other than the timelock). An attacker can exploit `delegatecall` to execute any logic with CM's storage context, bypassing all guards. Fix: disallow `delegatecall` entirely in the guard.
+  Map to: onlyOwner, timelock_bypass, multisig_threshold
+
+---
+
+- Pattern: Deployer retains privileged roles (`DAO`, `GOV`) after deployment; if the private key is compromised the attacker can execute any governance action immediately.
+  Where it hit: Lybra Finance `GovernanceTimelock` contract, constructor role assignment
+  Severity: HIGH
+  Source: Solodit (row_id 10769)
+  Summary: The constructor grants `DAO` and `GOV` roles to the deployer address. Until those roles are revoked, a compromised deployer key has full governance power. The team fixed this by revoking deployer permissions post-deployment and introducing a multisig for the `ADMIN` role. Best practice: transfer/revoke deployer roles atomically in the deployment script.
+  Map to: onlyOwner, admin_drain, multisig_threshold
+
+---
+
+- Pattern: Single EOA owner can pause the protocol indefinitely with no maximum pause duration and no emergency-exit path for users, stranding funds.
+  Where it hit: `StakerLight` contract (`pause`/`unpause`, `addRewards`, `recoverERC20` all `onlyOwner`)
+  Severity: MEDIUM
+  Source: Solodit (row_id 2220)
+  Summary: The owner can pause the contract, preventing withdrawals, while also being able to call `recoverERC20` to remove tokens. There is no cap on pause duration and no emergency-withdraw for users. Fix: add a maximum pause window, allow users to exit during a pause, and use a multisig or timelock for owner actions.
+  Map to: onlyOwner, Ownable, timelock_bypass
+
+---
+
+- Pattern: Admin can change a critical address (LP token, controller, yield provider) to an arbitrary value without any timelock, allowing immediate rug of staked user funds.
+  Where it hit: `veGUAN.sol` (`setLpToken`), various vault/strategy contracts
+  Severity: MEDIUM
+  Source: Solodit (row_id 2794)
+  Summary: The owner can call `setLpToken` to replace the staking token with a worthless address. Users who then unstake receive a different token with no value instead of their original GUAN. Fix: protect critical address setters with a timelock or multisig to give users time to observe and exit.
+  Map to: onlyOwner, admin_drain, timelock_bypass
+
+---
+
+- Pattern: `DEFAULT_ADMIN_ROLE` can set `_minDelay` in a timelock to an arbitrarily large value (e.g., max uint256), effectively freezing all future governance proposals with no recovery path.
+  Where it hit: `TimelockSafeGuard.updateMinDelay`
+  Severity: MEDIUM
+  Source: Solodit (row_id 1485)
+  Summary: The admin role can call `updateMinDelay` with no upper bound check, setting a delay so large that no proposal can ever be executed, bricking governance. There is also no mechanism to cancel the locked state. Fix: cap `_minDelay` at a reasonable maximum (e.g., 30 days) and prevent setting it to zero.
+  Map to: onlyOwner, timelock_bypass, admin_drain
+
+
 ## Step Execution Checklist
 
 - [ ] Step 1: ALL privileged functions enumerated (via Slither, not manual scan)

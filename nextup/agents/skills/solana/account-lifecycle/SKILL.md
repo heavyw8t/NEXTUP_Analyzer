@@ -99,6 +99,83 @@ For each account type that can be initialized:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: `init_if_needed` on staking config allows anyone to re-initialize parameters after first deployment
+  Where it hit: Staking program / `Initialize` instruction
+  Severity: HIGH
+  Source: Solodit (row_id 7319)
+  Summary: The `Initialize` instruction uses `init_if_needed`, which succeeds even when the account already exists and is populated. Any caller can invoke it again to overwrite staking parameters (rates, authorities, caps) at will. The fix is to replace `init_if_needed` with `init`, which fails if the account already exists.
+  Map to: init_if_needed, account_reinit
+
+- Pattern: `init_if_needed` on staking parameters allows repeated re-initialization by any caller
+  Where it hit: Staking program / staking parameters account
+  Severity: HIGH
+  Source: Solodit (row_id 8967)
+  Summary: Identical root cause to row 7319 — `init_if_needed` permits the staking parameter account to be re-initialized after it was already populated, letting an attacker reset protocol configuration. The fix switches to `init` so the first initialization is the only one.
+  Map to: init_if_needed, account_reinit
+
+- Pattern: `close_account` sends refund to wrong recipient; closed account data allows ghost orders after purge
+  Where it hit: Dex user account / `close_account` instruction
+  Severity: HIGH
+  Source: Solodit (row_id 15890)
+  Summary: After an account is closed the program does not reset the account's tag/discriminator field, leaving the close incomplete. During the grace period before the runtime purges the account, a new order can be filed referencing the closed account. If that order is matched after purge the program cannot find the necessary state, causing a loss of funds and a frozen event queue. The fix adds a step to reset the account tag inside `close_account`.
+  Map to: close_account, account_reinit
+
+- Pattern: `ClosePosition` passes token mint key instead of token account key, making rent reclaim impossible
+  Where it hit: Jet v2 / `ClosePosition` instruction
+  Severity: HIGH
+  Source: Solodit (row_id 15276)
+  Summary: The `ClosePosition` handler passes the token mint's public key in the field that should hold the token account to close. The SPL token close call targets the wrong account, so the position is never actually closed and rent-exempt lamports are permanently stranded. The fix corrects the key passed to the instruction.
+  Map to: close_account, rent_exempt
+
+- Pattern: Non-rent-exempt market accounts can be purged by the runtime, enabling account address reuse for a new exchange
+  Where it hit: Agnostic orderbook / `create_market` instruction
+  Severity: HIGH
+  Source: Solodit (row_id 15892)
+  Summary: `create_market` assumes that the caller pre-created market accounts (event queue, bids, asks) with sufficient lamports, but does not verify rent-exempt status. If any account falls below the rent-exempt threshold it will be purged. An attacker can recreate the account at the same address and use it in a new, attacker-controlled exchange, draining user funds. The fix adds an explicit rent-exempt balance check inside `create_market`.
+  Map to: rent_exempt, account_reinit
+
+- Pattern: Hardcoded `Rent::default()` instead of `Rent::get()` underfunds new accounts, enabling DoS via purge
+  Where it hit: Deriverse program / account creation logic
+  Severity: MEDIUM
+  Source: Solodit (row_id 87)
+  Summary: Account creation uses a hardcoded default rent amount rather than fetching the current value from the on-chain `Rent` sysvar. If the sysvar value differs (e.g., after a network upgrade), funded accounts may fall below the rent-exempt threshold and be purged by the runtime, causing a denial of service. The fix replaces `Rent::default()` with `Rent::get()`.
+  Map to: rent_exempt
+
+- Pattern: `init` on ATA fails when account pre-exists, allowing DoS via front-running account creation
+  Where it hit: Pump Science / `CreateBondingCurve` instruction
+  Severity: MEDIUM
+  Source: Solodit (row_id 2971)
+  Summary: `CreateBondingCurve` opens a `bonding_curve_token_account` with Anchor's `init` constraint. Because ATAs are deterministic, an attacker can create the ATA in advance, causing every legitimate `CreateBondingCurve` call to fail with `AccountAlreadyInitialized`. The fix changes the constraint to `init_if_needed`, which succeeds whether or not the account already exists.
+  Map to: init_if_needed
+
+- Pattern: `init` on ATA allows permanent DoS of NFT deposit by front-running ATA creation
+  Where it hit: Liquidity lockbox / `deposit` instruction
+  Severity: MEDIUM
+  Source: Solodit (row_id 8774)
+  Summary: The `deposit` function uses Anchor's `init` constraint for the NFT's ATA. An attacker creates the ATA for a target NFT before a victim's deposit, causing the victim's transaction to fail with `AccountAlreadyInitialized`. This permanently blocks deposits for that specific NFT position. The fix uses `init_if_needed` or a different ATA handling strategy.
+  Map to: init_if_needed
+
+- Pattern: Rent-exempt check in bonding curve invariant includes rent lamports in the SOL balance comparison, corrupting the invariant
+  Where it hit: Pump Science / bonding curve invariant check
+  Severity: MEDIUM
+  Source: Solodit (row_id 2249)
+  Summary: The invariant check compares `sol_escrow_lamports` (which includes rent) against `real_sol_reserves` (which excludes rent). The check can pass when it should fail because the rent portion inflates the left-hand side. The fix subtracts the rent-exempt amount from `sol_escrow_lamports` before the comparison so both sides represent actual reserves.
+  Map to: rent_exempt
+
+- Pattern: `cancel_auction` fails with `UnbalancedInstruction` when a bid exists because lamport transfer precedes CPI completion
+  Where it hit: Auction program / `cancel_auction` instruction
+  Severity: MEDIUM
+  Source: Solodit (row_id 8889)
+  Summary: The close/transfer sequence in `cancel_auction` moves lamports before all CPIs finish, triggering a runtime `UnbalancedInstruction` error. Sellers cannot cancel auctions where a bid has already been placed, locking auction state. The fix restructures the instruction so the lamport transfer happens after all CPI calls complete.
+  Map to: close_account
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

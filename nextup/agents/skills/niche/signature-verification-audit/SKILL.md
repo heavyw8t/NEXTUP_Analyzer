@@ -162,3 +162,59 @@ This agent's output (`niche_signature_findings.md`) is read by:
 - Phase 4a inventory merge (after Phase 4b iteration 1)
 - Phase 4c chain analysis (signature bugs can enable other attacks - e.g., signature replay enables unauthorized withdrawal)
 - Phase 6 report writers
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: ECDSA signature malleability via compact-signature dual-format in OZ ECDSA library
+  Where it hit: Biconomy contracts / `ECDSA.recover` and `ECDSA.tryRecover`
+  Severity: HIGH
+  Source: Solodit (row_id 7231)
+  Summary: The OpenZeppelin ECDSA library accepted both standard and compact (EIP-2098) signature formats without enforcing the `s <= n/2` bound on compact signatures. For any valid `(r, s, v)`, the complementary `(r, n-s, v^1)` also passed verification, letting an attacker reuse a consumed signature in a different form and bypass replay protection that tracked signatures as unique identifiers. The fix is to upgrade to OZ >= 4.7.3, which enforces the lower-half `s` constraint on all signature formats.
+  Map to: signature, ECDSA, malleability
+
+- Pattern: Forwarder contract does not validate chainId from domain separator against `block.chainid`
+  Where it hit: Forwarder contract / `execute()`
+  Severity: HIGH
+  Source: Solodit (row_id 8343)
+  Summary: The `execute` function verified the EIP-712 signature but never compared the `chainId` embedded in the domain separator against the contract's live `block.chainid`. A signature produced on one chain was fully accepted on any other chain running the same forwarder, enabling cross-chain replay of meta-transactions. The fix adds an explicit equality check between the recovered domain's chainId and `block.chainid` before processing any request.
+  Map to: signature, replay, EIP712, ECDSA
+
+- Pattern: ERC-7739 domain separator sets `verifyingContract` to the SessionModule address instead of the per-account address
+  Where it hit: SmartSession / ERC-7739 implementation
+  Severity: HIGH
+  Source: Solodit (row_id 4556)
+  Summary: The ERC-7739 anti-replay scheme for smart accounts binds signatures to a specific `verifyingContract`. The implementation used the shared `SmartSession` module address instead of the individual account's address, so a signature valid for one account was equally valid for every account that shared the same signer through that module. The fix changes the domain separator construction to use `msg.sender` (the smart account) as `verifyingContract`.
+  Map to: signature, EIP712, replay, ECDSA
+
+- Pattern: `ecrecover` return value not checked for `address(0)`, allowing invalid signatures to authenticate
+  Where it hit: Term Finance contracts / `authenticate()`
+  Severity: HIGH
+  Source: Solodit (row_id 12536)
+  Summary: `authenticate()` called `ecrecover()` and compared the result to expected signers without first checking for the zero-address sentinel that `ecrecover` returns on malformed input. An attacker could craft an invalid signature that caused `ecrecover` to return `address(0)`, and if `address(0)` was ever an authorized signer (e.g., a default or uninitialized slot), the check would pass. The fix reverts with `InvalidSignature` when `ecrecover` returns `address(0)`. The same root cause was present in the Astaria `_validateCommitment` function (row_id 14379), where a vault initialized with no delegate defaulted to `address(0)`, letting attackers drain the vault with arbitrary phony signatures.
+  Map to: signature, ECDSA, ecrecover
+
+- Pattern: Nonce not invalidated after use, enabling repeated replay of the same signed message
+  Where it hit: QuailFinance.sol / join-round flow (lines 127-128)
+  Severity: HIGH
+  Source: Solodit (row_id 7712)
+  Summary: An authenticated address could call the join-round function multiple times with the same signature and nonce, because the nonce was neither incremented nor marked used after the first call. The attacker could flood the round, crowd out other participants, and statistically guarantee a win by becoming the dominant entrant. The fix is to consume (mark used or increment) the nonce atomically with the first valid verification, before any state change that benefits the caller.
+  Map to: signature, nonce, replay, ECDSA
+
+- Pattern: Signed message omits contract address, allowing cross-contract signature replay
+  Where it hit: NFTStaking / `_stakeNFTs()`
+  Severity: HIGH
+  Source: Solodit (row_id 191)
+  Summary: The signature hash used for rarity attestation did not include the staking contract's address. The same backend-issued signature was therefore valid against any contract that used the same hash schema, letting an attacker present a signature obtained from a different deployed contract to stake low-rarity NFTs while receiving high-rarity rewards. The fix is to include `address(this)` in the signed payload so signatures are bound to the specific contract.
+  Map to: signature, replay, ECDSA
+
+- Pattern: Same signature schema accepted by two different contract functions, enabling cross-function replay
+  Where it hit: SapienRewards and SapienStaking / `verifyOrder()`
+  Severity: HIGH
+  Source: Solodit (row_id 1920)
+  Summary: Both contracts used identical signature formats and verification logic without a function or operation identifier in the signed data. A signature generated for the staking flow passed validation in the rewards-claim flow, letting an attacker replay a staking signature to claim unauthorized token rewards and drain the contract. The fix is to adopt EIP-712 typed structured data with a distinct `typeHash` per operation, track used order hashes, and include the target contract address in the domain separator.
+  Map to: signature, replay, EIP712, nonce, ECDSA
+
+

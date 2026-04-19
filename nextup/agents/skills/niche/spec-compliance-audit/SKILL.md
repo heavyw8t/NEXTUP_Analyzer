@@ -114,3 +114,59 @@ This agent's output (`niche_spec_compliance_findings.md`) is read by:
 - Phase 4a inventory merge (after Phase 4b iteration 1)
 - Phase 4c chain analysis (enabler enumeration - spec mismatches can enable other attacks)
 - Phase 6 report writers (findings appear in the report like any other finding)
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: ERC-4626 `withdraw()` rounds shares down instead of up, violating the standard's rounding requirement for withdraw/redeem
+  Where it hit: FundContract / `withdraw()`
+  Severity: HIGH
+  Source: Solodit (row_id 1519)
+  Summary: The `withdraw()` function rounds the requested asset amount down when computing shares to burn. EIP-4626 §7 requires that `withdraw` and `redeem` round shares *up* (in the vault's favor) so that users cannot extract more assets than their shares represent. Rounding down lets callers receive slightly more assets per call than they are entitled to, draining the vault at the expense of other depositors. The fix is to substitute round-down division with round-up (ceiling) division when converting assets to shares in the withdrawal path.
+  Map to: EIP_compliance, ERC4626, rounding, withdraw, previewWithdraw
+
+- Pattern: ERC-721 `onERC721Received` callback never invoked because the contract calls `transferFrom` instead of `safeTransferFrom`
+  Where it hit: OmoAgent / `depositPosition()` and `onERC721Received()`
+  Severity: HIGH
+  Source: Solodit (row_id 1964)
+  Summary: The contract implements `onERC721Received` to execute deposit logic when an NFT arrives, but `depositPosition()` moves the token via plain `transferFrom`. EIP-721 only triggers the `onERC721Received` callback when `safeTransferFrom` is used. The result is that legitimate deposits never execute the handler, causing permanent denial-of-service for deposit functionality and any subsequent protocol actions gated on it. The fix is to replace `transferFrom` with `safeTransferFrom` at every deposit call site.
+  Map to: EIP_compliance, ERC721, onERC721Received, safeTransferFrom, callback
+
+- Pattern: EIP-712 `STRATEGY_TYPEHASH` uses `uint256` for a field typed `uint32` in the struct, plus a struct-name collision with another on-chain struct
+  Where it hit: VaultImplementation.sol / IVaultImplementation.sol / `STRATEGY_TYPEHASH`
+  Severity: HIGH
+  Source: Solodit (row_id 13268)
+  Summary: The `STRATEGY_TYPEHASH` encodes `strategistNonce` as `uint256` but the Solidity struct declares it as `uint32`. EIP-712 §11 requires the type string to match the exact Solidity type of every field; a mismatch produces a different digest than off-chain signers compute, so signatures always fail or, worse, accept incorrectly padded data. Additionally, the type string reuses the name `StrategyDetails` for a different struct already present in the ABI, violating the uniqueness requirement in EIP-712 §14. Both issues must be corrected: update the type string to `uint32` and rename one of the colliding structs.
+  Map to: EIP_compliance, EIP712, typehash, domainSeparator, signature
+
+- Pattern: ERC-20 `transfer()` return value not checked, allowing silent transfer failures to be treated as successes
+  Where it hit: MerkleVesting / `withdraw()`
+  Severity: HIGH
+  Source: Solodit (row_id 15940)
+  Summary: The `withdraw()` function calls `token.transfer(user, amount)` without inspecting the boolean return value. EIP-20 §6 specifies that compliant tokens MUST return a boolean indicating success or failure. Non-reverting ERC-20 implementations (e.g., tokens that return `false` on failure) allow the transfer to silently fail while the function records the allocation as distributed, permanently locking the user's vested tokens. The fix is to use OpenZeppelin's `SafeERC20.safeTransfer`, which checks the return value and reverts on failure.
+  Map to: EIP_compliance, ERC20, return_value, safeTransfer, transfer
+
+- Pattern: EIP-2612 domain separator cached at deployment with a fixed chain ID, enabling cross-fork signature replay
+  Where it hit: ERC20Permit / `permit()`
+  Severity: HIGH
+  Source: Solodit (row_id 16294)
+  Summary: The contract stores the `DOMAIN_SEPARATOR` as an immutable computed once at construction time using the chain ID at that moment. EIP-2612 §3 and EIP-712 §2.9 require implementations to detect chain ID changes (hard forks) and recompute the separator dynamically so signatures cannot be replayed on the fork chain. With a fixed separator, a valid permit signed on the original chain is also valid on any fork that shares the same chain ID, allowing replay attacks that drain allowances without the owner's knowledge. The fix is to check `block.chainid` on every `permit()` call and recompute the separator if it differs from the cached value, following OpenZeppelin's `EIP712._domainSeparatorV4()` pattern.
+  Map to: EIP_compliance, EIP712, ERC20, EIP2612, permit, domainSeparator, replay
+
+- Pattern: ERC-1155 calldata array offset mishandling in inline assembly corrupts `safeBatchTransferFrom` token and amount arrays
+  Where it hit: ERC1155.sol / LibTransient.sol / Lifebuoy.sol
+  Severity: HIGH
+  Source: Solodit (row_id 2934)
+  Summary: The assembly code accesses calldata array elements by adding a fixed offset to the calldata pointer. EVM ABI encoding for dynamic arrays places a length-prefixed data region at a location pointed to by an offset word, not directly at the pointer. When the pointer does not happen to coincide with the array start (e.g., arrays following other dynamic arguments), the assembly reads the wrong memory region, producing corrupted or attacker-controlled token IDs and amounts in `safeBatchTransferFrom`. The issue was fixed in Solady PR 1237 by correctly dereferencing the ABI-encoded offset before reading array elements.
+  Map to: EIP_compliance, ERC1155, safeBatchTransferFrom, calldata, assembly
+
+- Pattern: ERC-20 `approve()` called directly on non-standard tokens (e.g., USDT) that do not return a boolean, causing unconditional revert
+  Where it hit: BrightPoolLenger / UniswapExchange / token approval logic
+  Severity: HIGH
+  Source: Solodit (row_id 8614)
+  Summary: The contracts call `IERC20(token).approve(spender, amount)` and expect a `bool` return value. Mainnet USDT and several other widely used tokens omit the return value entirely, violating the EIP-20 interface the contracts assume. The ABI decoder reverts when it attempts to decode a missing return value as `bool`, making approval permanently unavailable for these tokens and blocking all downstream operations that require an allowance. The fix is to replace raw `approve` calls with OpenZeppelin's `SafeERC20.safeApprove` (or `forceApprove`), which handles non-returning tokens via low-level call inspection.
+  Map to: EIP_compliance, ERC20, return_value, approve, safeApprove, USDT
+
+

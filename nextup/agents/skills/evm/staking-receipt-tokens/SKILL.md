@@ -177,6 +177,113 @@ When the protocol has multi-step operations (request → wait → claim), check 
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+> Skill: `evm/staking-receipt-tokens`
+> Selected: 8 of 31 candidates
+> Coverage: receipt_token transferable vs bound, sToken, stake_rate, stake_receipt, receipt_burn
+
+---
+
+## Example 1 — Receipt token freely mintable to arbitrary address
+
+- **row_index**: 1880
+- **severity**: HIGH
+- **theme**: receipt_token transferable vs bound
+- **keyword_match**: receipt_token, stake_receipt
+- **summary**: `InfiniFiGatewayV1` lets anyone mint iUSD receipt tokens to any address. The `ReceiptToken` contract enforces action restrictions during transfers, so unsolicited minting disrupts user operations and voting mechanisms. Fixed by removing `ActionRestriction` from iUSD/siUSD.
+- **skill_steps_triggered**: Step 2 (transferability), Step 2b (unsolicited transfer), Step 3 (balance dependencies), Step 8 (on-transfer side effects — action restrictions fire on transfer)
+- **agent_note**: Confirms Step 2b rule: if an external party can mint or transfer receipt_token to protocol without going through deposit path, any action-gating logic breaks. Check `mint(to, amount)` signatures for missing `msg.sender == to` guards.
+
+---
+
+## Example 2 — sToken flash loan steals unlocked capital at snapshot
+
+- **row_index**: 13053
+- **severity**: MEDIUM
+- **theme**: receipt_token transferable vs bound, stake_rate lag
+- **keyword_match**: sToken, stake_receipt
+- **summary**: In a protection pool, `assessState` is callable by anyone. An attacker predicts when a late loan triggers `lockCapital`, which snapshots sToken holders. The attacker flash-loans sTokens from a secondary market (e.g. Uniswap), calls `assessState` to snapshot themselves, repays the flash loan, then claims unlocked funds. Fixed by restricting `assessState` to trusted callers.
+- **skill_steps_triggered**: Step 1 (receipt token = sToken), Step 2 (transferable — traded on secondary market), Step 4 (donation/transfer attack model — flash loan variant), Step 5 (attacker profits)
+- **agent_note**: Flash-loan receipt acquisition is the attack primitive in Step 4 `{EXTERNAL_ACQUISITION}`. Any snapshot that records `balanceOf` at the block of an event (not over time) is vulnerable when receipt_token is freely transferable.
+
+---
+
+## Example 3 — pToken exchange rate corrupted by missing totalBorrows decrement in liquidation
+
+- **row_index**: 11168
+- **severity**: HIGH
+- **theme**: receipt_rate manipulation
+- **keyword_match**: stake_rate (exchange rate), receipt_token (pToken)
+- **summary**: DODOV3MM `liquidate` does not decrement `totalBorrows` for the debt token. Because pToken exchange rate is computed from `totalBorrows`, depositors receive more interest than is economically backed. The last withdrawer cannot redeem because insufficient underlying tokens exist.
+- **skill_steps_triggered**: Step 3 (balance dependency — exchange rate formula), Step 5 (impact — last withdrawer DoS, interest not covered by anyone)
+- **agent_note**: Represents the class where `stake_rate` (exchange rate) diverges from reality because a state mutation path (liquidation) skips the rate-update write. Audit all exit paths for missing `totalBorrows`/`totalSupply` updates.
+
+---
+
+## Example 4 — Wrong bToken exchange rate used for collateral valuation
+
+- **row_index**: 10572
+- **severity**: HIGH
+- **theme**: receipt_rate manipulation
+- **keyword_match**: stake_rate (exchangeRateStored), receipt_token (bToken)
+- **summary**: `BlueBerryBank.getIsolatedCollateralValue()` uses the debt token's bToken exchange rate instead of the underlying token's bToken exchange rate. When `underlyingVaultShare` is stored after a softVault mint, retrieving its value requires multiplying by the *underlying* token's `exchangeRateStored`, not the debt token's. Miscalculation leads to wrong position risk assessment.
+- **skill_steps_triggered**: Step 3 (balance dependencies — exchange rate read site), Step 5 (impact — mispriced collateral, protocol assumes bad debt)
+- **agent_note**: Confirms that receipt_rate errors often arise at the read site rather than the write site. When a protocol holds multiple receipt tokens (one per asset), verify each rate lookup fetches the rate for the *same* token whose balance is being scaled.
+
+---
+
+## Example 5 — sToken withdrawal request resets cooldown, enabling DoS
+
+- **row_index**: 3704
+- **severity**: HIGH
+- **theme**: sToken burn-without-claim
+- **keyword_match**: sToken, stake_receipt (withdrawal NFT introduced as fix)
+- **summary**: `SToken.withdrawRequest` is callable by anyone with sufficient allowance on behalf of any owner. Each call resets the cooling period regardless of amount. An attacker loops small requests, perpetually resetting the cooldown and blocking legitimate users from claiming. Fixed by adding an NFT receipt mechanism so withdrawal requests become bound to a non-fungible claim ticket.
+- **skill_steps_triggered**: Step 2 (transferability — withdrawRequest callable permissionlessly), Step 8 (on-transfer side effects — NFT receipt introduced to bind claim), Step 5 (impact — DoS on withdrawal)
+- **agent_note**: The fix (NFT receipt) turns a fungible permission into a bound stake_receipt. This is the design pattern Step 2b targets: if the withdrawal authorization is separable from the position owner, the claim path is exploitable.
+
+---
+
+## Example 6 — sToken protocol freeze when totalSTokenUnderlying is zero but totalSupply is nonzero
+
+- **row_index**: 13051
+- **severity**: MEDIUM
+- **theme**: receipt double-accounting
+- **keyword_match**: sToken, stake_rate (_getExchangeRate), receipt_burn
+- **summary**: In a protection pool, if all underlying is swept but sToken supply remains nonzero, `_getExchangeRate()` returns zero. `convertToSToken` divides by zero and reverts, freezing all new deposits and protection purchases. `_leverageRatio` also becomes zero, blocking buys. Recovery requires every sToken holder to burn shares after enough cycles.
+- **skill_steps_triggered**: Step 3 (balance dependency — exchange rate formula reads totalSTokenUnderlying), Step 5 (impact — protocol freeze), Step 4 (gap between tracked totalSTokenUnderlying and actual sToken supply)
+- **agent_note**: Demonstrates the `tracked_vs_actual` gap from the Output Schema. When `totalSTokenUnderlying` can reach zero through loss events while `totalSupply` stays nonzero, every function that divides by exchange rate is a freeze vector.
+
+---
+
+## Example 7 — sToken address passed to reward accrual steals contract funds
+
+- **row_index**: 15092
+- **severity**: HIGH
+- **theme**: receipt double-accounting
+- **keyword_match**: sToken, stake_receipt (aToken/vToken distinction)
+- **summary**: `RewardsManagerForAave.accrueUserUnclaimedRewards` is public and accepts a token address. The function assumes that if the token is not the variable debt token it must be the aToken, so it uses `supplyBalance` for reward computation. An attacker passes an sToken address, which is neither, but the branch executes and accrues rewards from the wrong balance. Fixed by explicitly validating the token is aToken or vToken.
+- **skill_steps_triggered**: Step 1 (identify receipt tokens — sToken, aToken, vToken), Step 2b (unsolicited input — attacker passes arbitrary address), Step 3 (balance dependency — supplyBalance used for reward calc), Step 5 (impact — theft from contract)
+- **agent_note**: Confirms that receipt_token confusion attacks arise when protocol code uses implicit type inference ("if not X then must be Y") rather than explicit validation. Any public function that branches on token identity without a strict allowlist is a candidate.
+
+---
+
+## Example 8 — Stake-LP reward rate varies by invocation time; early callers drain pool
+
+- **row_index**: 17602
+- **severity**: HIGH
+- **theme**: stake_rate lag vs reward distribution
+- **keyword_match**: stake_rate, sToken (StakeLP pToken reward tokens)
+- **summary**: pSTAKE Finance StakeLP distributes rewards by calling `calculateRewardsAndLiquidity`. The reward amount depends on *when* the function is called because the rate changes over time and not all LP providers have staked. Users who call earlier or later than others receive different amounts; the reward amount can even decrease over time. Fixed by adopting a per-second accumulator algorithm that is time-invariant at claim time.
+- **skill_steps_triggered**: Step 3 (balance dependency — reward calculation reads a time-dependent rate), Step 5 (impact — unfair distribution, first-caller advantage), Step 8 (on-transfer side effects — reward claim triggered by LP interactions)
+- **agent_note**: Canonical stake_rate lag pattern. Any reward formula of the form `rate * elapsed_since_last_call` gives first-movers an advantage and creates a race condition. Look for `block.timestamp` or `block.number` arithmetic inside reward distribution without a global accumulator checkpoint.
+
+
 ## Step Execution Checklist (MANDATORY)
 
 > **CRITICAL**: You MUST report completion status for ALL steps. Findings with incomplete steps (✗ or ? without valid reason) will be flagged for depth review.

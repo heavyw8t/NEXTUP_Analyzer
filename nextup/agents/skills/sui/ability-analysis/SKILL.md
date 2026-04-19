@@ -187,6 +187,62 @@ For each module with an `init` function:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+- Pattern: id_leak_verifier bypass via package upgrade — UID reuse across package versions enables object identity spoofing
+  Where it hit: sui-verifier / `id_leak_verifier` check
+  Severity: HIGH
+  Source: Solodit (row_id 11775)
+  Summary: The Sui verifier enforces that UIDs for objects bearing the `key` ability are not reused. However the check can be bypassed through the Sui upgrade model: upgrades can introduce new capabilities, the verifier does not validate structs that lack `key` at the time of the check, and objects can be passed between different versions of the same package. An attacker can therefore reuse a UID across a package upgrade, violating the invariant that every `key` object has a globally unique on-chain identity. The fix adds upgrade-aware validation that tracks UID lineage across package versions.
+  Map to: key, ability
+
+- Pattern: Hot-potato ticket not consumed on all exit paths — `UnstakeTicket` drop missing, causing PTB abort
+  Where it hit: native_pool / `burn_ticket_non_entry`
+  Severity: MEDIUM
+  Source: Solodit (row_id 9957)
+  Summary: `burn_ticket_non_entry` collects SUI coins for the user during unstaking but does not account for coins held in `NativePool::pending`. When the pending balance is non-zero the function fails to consume all resources, leaving the `UnstakeTicket` value alive and the PTB cannot complete — it aborts because the ticket struct has no `drop` ability. The fix adds `NativePool::pending` to the coin collection path so the ticket can always be fully consumed.
+  Map to: hot_potato, drop, ability
+
+- Pattern: Large-stake `UnstakeTicket` creation blocks epoch reclaim — hot-potato consumption path fails under size constraint
+  Where it hit: native_pool / unstake flow
+  Severity: MEDIUM
+  Source: Solodit (row_id 9958)
+  Summary: A user who creates an `UnstakeTicket` for a large stake amount triggers a condition check that prevents reclaiming during the current epoch. Because `UnstakeTicket` has no `drop` ability it must be consumed via the designated burn function; when that function's precondition fails the entire PTB aborts. An attacker can use this to grief users by ensuring the consumption precondition cannot be satisfied. The fix removes the blocking condition and sets a minimum value guard so the ticket's consumption path is always reachable.
+  Map to: hot_potato, drop, ability
+
+- Pattern: Vault receipt struct with `store` allows unrestricted public transfer, bypassing protocol-enforced redemption rules
+  Where it hit: bluefin_vault / share/receipt structs
+  Severity: HIGH
+  Source: Solodit (row_id 8567)
+  Summary: The bluefin_vault protocol issues receipt structs that carry `store`, making them freely transferable via `transfer::public_transfer`. A zero-balance vault state (total_balance == 0, shares > 0) allows an attacker to deposit and receive zero shares — effectively burning their deposit — while the receipt struct remains transferable to any address. The intended restriction that receipts can only be redeemed by the original depositor is bypassed because `store` enables arbitrary transfer. The fix locks a minimum share/token amount at initialization and asserts non-zero shares in deposit/withdrawal, but the root structural issue is that the receipt ability set should not include `store` if transfer restriction is a protocol invariant.
+  Map to: store, ability, key
+
+- Pattern: Spot-price oracle used inside Move module for domain pricing enables flash-loan manipulation — no TWAP witness requirement
+  Where it hit: usernames module / Initia Move platform / domain registration pricing
+  Severity: HIGH
+  Source: Solodit (row_id 1804)
+  Summary: The `usernames` module derives domain registration fees from the Dex module's spot price. Because the price source is a simple balance query rather than a time-weighted or oracle-witnessed value, an attacker can use a flash loan or large deposit to manipulate the spot price, buying domains cheaply and causing other users to overpay. In Sui/Move terms the absence of a witness type or capability that enforces price provenance means any caller can trigger pricing from a manipulated state. The team planned to hardcode price at 1 and later use Slinky oracle. The mapping to ability patterns: a `witness` or one-time capability type that proves a legitimate price feed was consulted would have enforced the invariant at the type level.
+  Map to: witness, ability
+
+- Pattern: Wallet address not removed from investor struct on `remove_wallet` — inaccurate balance calculations from stale object reference
+  Where it hit: registry_service / `remove_wallet`
+  Severity: HIGH
+  Source: Solodit (row_id 3917)
+  Summary: `registry_service::remove_wallet` deletes the wallet's data entry but leaves the address reference inside `investor.wallets`. Functions like `investor_wallet_balance_total` iterate over `investor.wallets` and access fields that no longer exist, producing incorrect balance sums. In Move ability terms the `investor.wallets` collection holds values by reference without `drop` semantics enforced at the struct level, so stale entries accumulate silently. The fix removes the address from `investor.wallets` in addition to deleting the wallet entry.
+  Map to: drop, store, ability
+
+- Pattern: Cross-chain give_coin uses `add_flow_out` for inbound token receipt — inverted flow tracking on `store`-bearing coin structs
+  Where it hit: CoinManagement / `give_coin`
+  Severity: HIGH
+  Source: Solodit (row_id 6915)
+  Summary: `give_coin` is called when receiving tokens via interchain transfer. The function invokes `add_flow_out` to record the movement, but the correct call is `add_flow_in`. Because the coin management struct carries `store`, it can be held and passed across module boundaries; the flow direction is not enforced by the type system and must be tracked manually. The bug causes the treasury capacity to be decremented on inbound transfers instead of incremented, eventually blocking legitimate operations. The fix changes the call to `add_flow_in`.
+  Map to: store, ability, copy
+
+
 ## Step Execution Checklist (MANDATORY)
 
 > **CRITICAL**: You MUST report completion status for ALL sections. Findings with incomplete sections will be flagged for depth review.

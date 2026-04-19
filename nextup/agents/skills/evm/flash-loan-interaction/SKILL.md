@@ -199,6 +199,288 @@ For each GAP found:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+Selected from candidates.jsonl (242 rows). 8 examples covering 6 distinct sub-patterns.
+
+---
+
+## Example 1 — Callback auth missing: initiator not verified in `executeOperation`
+
+*Category*: `callback_auth` / `initiator_check`
+*Severity*: HIGH
+*Source row*: 9923 | tags: Missing Check; Flash Loan
+
+***Summary***
+
+`WidoCollateralSwap_Aave.executeOperation` and `WidoCollateralSwap_ERC3156.onFlashLoan` did not verify that `msg.sender` was the expected flash loan provider or that the `initiator` was the swap contract itself. Any caller could invoke the callback directly, impersonate another user, and manipulate sensitive parameters.
+
+***Vulnerable pattern***
+
+```solidity
+// IERC3156 callback — no initiator check
+function onFlashLoan(
+    address initiator,
+    address token,
+    uint256 amount,
+    uint256 fee,
+    bytes calldata data
+) external returns (bytes32) {
+    // initiator never verified — attacker calls this directly
+    _executeSwap(data);
+    return keccak256("ERC3156FlashBorrower.onFlashLoan");
+}
+```
+
+***Fix***
+
+```solidity
+require(msg.sender == address(flashLender), "bad lender");
+require(initiator == address(this),         "bad initiator");
+```
+
+***Key signals***: `IERC3156`, `onFlashLoan`, `executeOperation`, `initiator`, no `require(initiator == address(this))`
+
+---
+
+## Example 2 — Callback auth missing: arbitrary `executeOperation` via Aave flash loan
+
+*Category*: `callback_auth` / `flashLoan`
+*Severity*: HIGH
+*Source row*: 16003
+
+***Summary***
+
+`SuperVault.executeOperation` checked only `msg.sender == lendingPool`, not whether the flash loan was self-initiated. An attacker triggered Aave's `lendingPool.flashLoan` with `SuperVault` as the receiver and crafted `params` to invoke `REBALANCE`, draining fees from the victim vault on every call.
+
+***Vulnerable pattern***
+
+```solidity
+function executeOperation(
+    address[] calldata assets,
+    uint256[] calldata amounts,
+    uint256[] calldata premiums,
+    address initiator,       // never checked
+    bytes calldata params
+) external override returns (bool) {
+    require(msg.sender == address(lendingPool));  // only lender checked
+    _rebalance(params);  // attacker-controlled params
+    ...
+}
+```
+
+***Fix***
+
+```solidity
+bool private _flashActive;
+
+function _startFlash(...) internal {
+    _flashActive = true;
+    lendingPool.flashLoan(...);
+    _flashActive = false;
+}
+
+function executeOperation(...) external override returns (bool) {
+    require(msg.sender == address(lendingPool));
+    require(_flashActive, "not self-initiated");
+    ...
+}
+```
+
+***Key signals***: `executeOperation`, `initiator` unused, Aave `flashLoan` with external `receiverAddress`
+
+---
+
+## Example 3 — Balance check fooled by flash loan: reward inflation via spot balance
+
+*Category*: `flashloan_manipulation` / balance-dependent reward accounting
+*Severity*: HIGH
+*Source row*: 6285
+
+***Summary***
+
+`FeeRewardsProcess.sol` used `balanceOf(stakeToken)` to determine a user's stake weight. An attacker flash-borrowed the stake token, called `claimReward` while holding a temporarily inflated balance, and extracted outsized rewards before repaying the loan.
+
+***Vulnerable pattern***
+
+```solidity
+// rewards proportional to live token balance — manipulable
+uint256 stakeAmount = IERC20(stakeToken).balanceOf(msg.sender);
+uint256 reward = (totalReward * stakeAmount) / totalSupply;
+_mintReward(msg.sender, reward);
+```
+
+***Fix***
+
+Use the protocol's internal accounting (`stakingAccount.stakeTokenBalances[stakeToken].stakeAmount`) instead of the live ERC-20 balance.
+
+***Key signals***: `balanceOf` used as stake weight in reward calc, no snapshot, no same-block guard
+
+---
+
+## Example 4 — Balance check fooled by flash loan: receiptToken reward inflation
+
+*Category*: `flashloan_manipulation` / `BALANCE_DEPENDENT`
+*Severity*: HIGH
+*Source row*: 16524
+
+***Summary***
+
+`AavePool` minted reward tokens proportional to the caller's `receiptToken.balanceOf`. An attacker flash-borrowed receipt tokens from a secondary market, called `claimReward`, and received inflated rewards in the same transaction.
+
+***Vulnerable pattern***
+
+```solidity
+function claimReward() external {
+    uint256 share = receiptToken.balanceOf(msg.sender);  // spot, not deposited amount
+    uint256 reward = (pendingRewards * share) / receiptToken.totalSupply();
+    _sendReward(msg.sender, reward);
+}
+```
+
+***Fix***
+
+Track deposited amounts internally; do not use live `balanceOf` for reward distribution. Add a `nonReentrant` guard and consider a same-block deposit/withdraw restriction.
+
+***Key signals***: `receiptToken.balanceOf`, reward calc on spot balance, no deposit snapshot
+
+---
+
+## Example 5 — Flash loan + governance: voting power inflation via flash-staked tokens
+
+*Category*: `flashloan_manipulation` / governance attack
+*Severity*: HIGH
+*Source row*: 9636 | tags: Vote; Flash Loan; Delegate
+
+***Summary***
+
+An attacker combined a flash loan with ERC-20 token delegation to bypass existing same-block flash loan mitigations. Because delegation updated voting checkpoints immediately and the proposal state check read current (not historical) checkpoints, the attacker could determine the outcome of a proposal that was still in the Locked state, all within one transaction.
+
+***Attack sequence***
+
+```
+1. BORROW  flash-loan governance token
+2. DELEGATE borrow → attack contract (updates checkpoint)
+3. CALL    getProposalState() reads inflated checkpoint → Locked → Succeeded
+4. EXECUTE proposal passes in same tx
+5. UNDELEGATE + REPAY flash loan
+```
+
+***Fix***
+
+Disallow delegation and undelegation in the same block as a deposit or withdrawal. Use ERC20Votes' historical snapshot (`getPastVotes`) rather than current balance for quorum/threshold checks.
+
+***Key signals***: `getPastVotes` vs `getVotes`, delegation in same block, `EarlyExecution` voting mode
+
+---
+
+## Example 6 — Flash loan + oracle manipulation: Uniswap V2 spot price used for pricing
+
+*Category*: `flashloan_manipulation` / oracle
+*Severity*: HIGH
+*Source row*: 7648 | tags: Oracle
+
+***Summary***
+
+A pricing contract called `uniswapV2Router.getAmountsIn()` directly, reading live pool reserves. An attacker flash-borrowed the reference token, sold it into the pair to crash its price, purchased the protocol's asset at a distorted rate, then repaid the loan. No TWAP was used.
+
+***Vulnerable pattern***
+
+```solidity
+// spot price — manipulable in one tx
+uint[] memory amounts = router.getAmountsIn(tokenBoxAmount, path);
+uint referenceTokenCost = amounts[0];
+```
+
+***Fix***
+
+Replace with a TWAP oracle (Uniswap V2's `price0CumulativeLast` / `price1CumulativeLast` with a minimum 30-minute window) or a Chainlink price feed.
+
+***Key signals***: `getAmountsIn`, `getReserves`, `slot0`, `sqrtPriceX96` used for pricing without TWAP
+
+---
+
+## Example 7 — Fee accounting bypass: flash loan fee ignored in `receiveFlashLoan`
+
+*Category*: `flashloan_manipulation` / fee accounting
+*Severity*: HIGH
+*Source row*: 10508 | tags: External Contract
+
+***Summary***
+
+`scWETHv2` and `scUSDCv2` vaults implemented Balancer's `receiveFlashLoan` callback but repaid exactly the borrowed amount, ignoring the `feeAmounts` parameter. This was safe only because Balancer currently charges zero fees. If Balancer introduces fees, repayment falls short, the flash loan reverts, and the vault's `rebalance`/`withdraw` paths become permanently bricked.
+
+***Vulnerable pattern***
+
+```solidity
+function receiveFlashLoan(
+    IERC20[] memory tokens,
+    uint256[] memory amounts,
+    uint256[] memory feeAmounts,  // ignored
+    bytes memory userData
+) external override {
+    // repays only `amounts`, not `amounts + feeAmounts`
+    for (uint i; i < tokens.length; i++) {
+        tokens[i].safeTransfer(address(vault), amounts[i]);
+    }
+}
+```
+
+***Fix***
+
+```solidity
+tokens[i].safeTransfer(address(vault), amounts[i] + feeAmounts[i]);
+```
+
+***Key signals***: `receiveFlashLoan`, `feeAmounts` parameter unused, Balancer vault integration
+
+---
+
+## Example 8 — Flash loan + liquidation sandwich: stability pool profit theft
+
+*Category*: `flashloan_manipulation` / liquidation sandwich
+*Severity*: HIGH
+*Source row*: 8553
+
+***Summary***
+
+An attacker used a flash loan to front-run the Stability Pool's normal liquidation flow. By temporarily depositing flash-borrowed stable tokens into the Stability Pool, triggering a liquidation, and immediately withdrawing, the attacker captured the collateral premium that should have accrued to long-term depositors. This drained liquidation profit from legitimate Stability Pool providers and reduced the incentive to keep the pool funded, risking stablecoin depeg.
+
+***Attack sequence***
+
+```
+1. BORROW  flash-loan stable token (e.g. mkUSD)
+2. DEPOSIT flash-borrowed tokens into StabilityPool
+3. LIQUIDATE an undercollateralized trove — attacker absorbs collateral gain
+4. WITHDRAW deposit + collateral gain
+5. REPAY   flash loan
+PROFIT = collateral_received - flash_loan_fee
+```
+
+***Fix***
+
+Apply a time factor: record the block (or timestamp) of each Stability Pool deposit and disallow withdrawal of liquidation gains earned in the same block. Alternatively, use checkpointed reward snapshots so same-block depositors receive zero gain from liquidations they did not fund before the event.
+
+***Key signals***: `StabilityPool`, `deposit`/`withdraw` same-block, no cooldown on liquidation gain, no deposit timestamp
+
+---
+
+## Coverage map
+
+| Sub-pattern | Example(s) |
+|---|---|
+| `callback_auth` / `initiator_check` missing | 1, 2 |
+| Balance check fooled by flash loan (`BALANCE_DEPENDENT`) | 3, 4 |
+| Flash + governance / read-only state manipulation | 5 |
+| Flash + oracle manipulation (spot price) | 6 |
+| Fee accounting bypass in flash callback | 7 |
+| Flash + liquidation sandwich | 8 |
+
+
 ## Step Execution Checklist (MANDATORY)
 
 | Section | Required | Completed? | Notes |

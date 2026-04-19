@@ -87,6 +87,104 @@ For protocols with emission/inflation/rebase mechanics:
 - Can emissions exceed the protocol's capacity to back them?
 - Is there a supply cap? Can it be bypassed by parameter changes?
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+> Source: candidates.jsonl (21 rows). 8 examples selected across 6 pattern categories.
+> Pattern tags: incentive, bank_run, griefing, sybil, first_mover, MEV_design
+
+---
+
+## incentive — Inflation Rate Decay Not Applied at Boundary
+
+- Pattern: `incentive`
+- Severity: HIGH
+- Source: Solodit (row_index 15697)
+- Protocol category: Dexes; CDP; Yield; Cross Chain; Staking Pool
+- Summary: If `_executeInflationRateUpdate` is not called exactly at the decay boundary, the old (higher) rate is used to compute `totalAvailableToNow` for the period that should have used the decayed rate. The result is that `totalAvailableToNow` accumulates more tokens than the protocol allows, and the total token supply can exceed the predetermined cap. The fix requires splitting the period at the decay boundary and applying each rate to its respective window.
+- Map to: emission_sustainability, inflation_rate, supply_cap_bypass
+
+---
+
+## bank_run — Unstable Liquidation Design Allows Collateral Drain
+
+- Pattern: `bank_run`
+- Severity: HIGH
+- Source: Solodit (row_index 13205)
+- Protocol category: Oracle
+- Summary: The DyadStablecoin liquidation mechanism lets a liquidator inject ETH and claim the entire dNFT plus all of its shares when shares fall below a threshold. Because liquidators also control `totalDeposits`, they can manipulate the threshold trigger. There is no game-theoretically stable outcome: the mechanism consistently over-rewards liquidators relative to the shortfall, and does not keep the system overcollateralized. Once one dNFT is liquidated at favorable odds, rational actors race to be first, creating a bank-run dynamic where liquidators cascade through all marginal positions.
+- Map to: bank_run, incentive_misalignment, liquidation_design
+
+---
+
+## sybil — Liquid Lock Bypass via Tokenized Contract Ownership
+
+- Pattern: `sybil`
+- Severity: HIGH
+- Source: Solodit (row_index 16208)
+- Protocol category: Liquid Staking; Dexes; CDP; Yield; Services
+- Summary: The HolyPaladinToken locking design assumes locked tokens are illiquid. An attacker deposits hPAL into a purpose-built contract, locks it, and delegates voting power to themselves. The ownership of the contract (i.e., the right to unlock and withdraw) can then be sold or tokenized, making the locked position liquid. This mirrors the veToken wrapper pattern (veCRV, veANGLE) and breaks the protocol's assumption that locking reduces circulating supply and concentrates voting power in long-term holders. Fix: whitelist only approved contract types for locking, matching the veCRV approach.
+- Map to: sybil_incentive, governance_bypass, lock_circumvention
+
+---
+
+## MEV_design — Slash Front-Run via Unstake Before Flag
+
+- Pattern: `MEV_design`
+- Severity: MEDIUM
+- Source: Solodit (row_index 9751)
+- Protocol category: Staking
+- Summary: A target staker in the Streamr VoteKickPolicy can monitor the mempool and call `unstake()` or `forceUnstake()` before the flagger's `flag()` transaction lands. The target exits with full funds before the slash condition is evaluated, defeating the slashing mechanism entirely. Because slashing depends on the target still being staked at the time `flag()` executes, any target with access to a flashbot searcher (or even a simple mempool watcher) can make themselves immune to governance-enforced penalties. Fix: introduce delayed unstaking so a fraction of funds remains at risk for the duration of the penalty window.
+- Map to: MEV_extractable_design, front_run_slash, staking_exit
+
+---
+
+## first_mover — NFT Collateral Liquidated at Minimum Price via Stale Auction
+
+- Pattern: `first_mover`
+- Severity: MEDIUM
+- Source: Solodit (row_index 14070)
+- Protocol category: Dexes; CDP; Services; Cross Chain; Indexes
+- Summary: In Paraspace, a user whose health factor recovers after a price drop does not automatically invalidate prior auctions unless they explicitly call `setAuctionValidityTime()`. An attacker opens auctions on all of a user's NFT collateral when the health factor first drops. The user supplies additional collateral to recover, but omits the validity reset. The attacker waits until auction prices decay to the minimum and liquidates all NFTs at that floor. The first actor to open auctions gains a persistent economic advantage regardless of the user's subsequent recovery actions.
+- Map to: first_mover_economic_advantage, auction_staleness, liquidation_MEV
+
+---
+
+## griefing — Staking Incentives Permanently Lost When Epoch Weight Is Zero
+
+- Pattern: `griefing`
+- Severity: MEDIUM
+- Source: Solodit (row_index 6604)
+- Protocol category: Staking
+- Summary: In `claimStakingIncentives`, when `totalWeight` for an epoch is zero (no votes allocated), `calculateStakingIncentives` returns a `totalReturnAmount` of zero rather than the expected unused allocation. The unused staking incentives are neither refunded to the inflation cap nor redistributed to future epochs — they are silently discarded. An attacker or negligent governance participant who ensures a nominee has zero votes in a given epoch can cause the entire epoch allocation to be lost, permanently reducing the protocol's reward budget.
+- Map to: griefing_incentive, epoch_zero_weight, reward_loss
+
+---
+
+## bank_run — Cooldown Dilution via Token Transfer Enables Early Unstake
+
+- Pattern: `bank_run`
+- Severity: MEDIUM
+- Source: Solodit (row_index 16205)
+- Protocol category: Liquid Staking; Dexes; CDP; Yield; Services
+- Summary: `_getNewReceiverCooldown` in HolyPaladinToken computes a weighted-average cooldown when a receiver already holds tokens. A user with a recently started cooldown (Day 0) can receive a transfer from a user whose cooldown started earlier (Day 15), pulling their effective cooldown forward. Concretely: Alice (200 tokens, Day 0 cooldown) receives 100 tokens from Bob (Day 15 cooldown), yielding a blended cooldown of Day 5. Alice can now unstake before the full `UNSTAKE_PERIOD` expires. This creates an economic incentive for coordinated transfers to mutually accelerate unstaking, mimicking a bank-run coordination game where rational actors exploit the averaging formula.
+- Map to: bank_run_dynamics, cooldown_dilution, early_unstake
+
+---
+
+## sybil — Credit Cap Bypassed by Repeated Function Calls
+
+- Pattern: `sybil`
+- Severity: MEDIUM
+- Source: Solodit (row_index 14763)
+- Protocol category: NFT
+- Summary: The NFTR protocol intends to cap assigner credits at `MAX_ASSIGNER_CREDITS` and user naming credits at `MAX_CREDITS_ASSIGNED`. Both `addAssignerCredits` and `assignNamingCredits` check the cap at the moment of a single call but do not track cumulative totals across calls. Calling either function multiple times in sequence bypasses the cap, allowing unlimited credit creation or accumulation. A sybil attacker can either self-assign naming credits far beyond the intended limit or, if they control an assigner address, mint unbounded credits and distribute them, distorting the protocol's naming tokenomics.
+- Map to: sybil_incentive, cap_bypass, credit_inflation
+
+
 ## Step Execution Checklist
 | Section | Required | Completed? |
 |---------|----------|------------|

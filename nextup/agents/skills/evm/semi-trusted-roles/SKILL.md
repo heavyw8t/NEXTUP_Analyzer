@@ -203,6 +203,188 @@ For each function callable by DEFAULT_ADMIN_ROLE or equivalent:
 
 ---
 
+## Real-world examples
+
+Use these as pattern precedents when investigating this skill. For each example, check whether the described mechanism is present in the scope code. If a match is found, tag the finding with `Example precedent: <row_id or URL>` (see `rules/finding-output-format.md`).
+
+### From the local Solodit-derived corpus
+
+> Source: candidates.jsonl (252 rows). 8 distinct mechanisms selected.
+> Tags used: `keeper`, `operator`, `relayer`, `crank`, `automation`, `bot_race`, `semi_trusted`
+
+---
+
+## Example 1 — Keeper Price Manipulation via Parameter Omission
+
+*Tags*: `keeper`, `semi_trusted`
+*Severity*: HIGH
+*Mechanism*: Parameter abuse — keeper selects whether to include a fresh Pyth price update, passing an empty array to use a stale price favorable to themselves.
+
+*Summary*: Flatmoney protocol allows keepers to update the Pyth oracle price when executing an order, but the check can be bypassed by passing an empty array. Keepers choose whether to push the latest price or not based on which benefits them, causing systematic losses to LPs or long traders.
+
+*Why it qualifies*: Classic parameter abuse under SKILL.md Step 2. The keeper is trusted to provide fresh oracle data but faces no enforcement. The attacker vector is within-scope role action with no malicious-params validation.
+
+*Pattern to detect*:
+- `executeOrder` or similar accepts `bytes[] calldata priceUpdateData`
+- No `require(priceUpdateData.length > 0)` or equivalent
+- Keeper fee paid regardless of whether update was provided
+- Protocol prices positions using whichever price is stored at execution time
+
+---
+
+## Example 2 — Keeper Opens Already-Liquidatable Positions
+
+*Tags*: `keeper`, `semi_trusted`
+*Severity*: HIGH
+*Mechanism*: Omission abuse — keeper is permitted to open positions with no check that the resulting position is above liquidation threshold.
+
+*Summary*: ELFI protocol keepers can execute order creation for positions that are immediately underwater. No post-open solvency check exists. A malicious or negligent keeper can cause protocol insolvency if liquidation is not profitable enough to cover losses.
+
+*Why it qualifies*: SKILL.md Step 2 Omission Abuse and Step 3 Scenario B. Role action (`executeOrder`) modifies critical protocol state without a guard the role is trusted to honor. The fix is a post-execution health check that the role cannot bypass.
+
+*Pattern to detect*:
+- `executeCreateOrder` or `openPosition` callable by keeper role only
+- No `isLiquidatable` check at end of execution
+- Liquidation function exists separately and is called by a different keeper path
+
+---
+
+## Example 3 — Keeper Reward Front-Running (Bot Race)
+
+*Tags*: `keeper`, `bot_race`, `semi_trusted`
+*Severity*: MEDIUM
+*Mechanism*: Timing abuse — attacker monitors mempool for a legitimate keeper transaction and front-runs it with the same call to steal the reward without doing the underlying work.
+
+*Summary*: KeeperRewardDistributor rewards are proportional to position size, creating a high-value MEV target. An attacker can front-run honest keepers by sending the same keeper transaction with higher gas, claiming the reward while the honest keeper's transaction reverts or arrives too late.
+
+*Why it qualifies*: SKILL.md Step 3 Scenario A (Timing Attack). Predictable reward calculation tied to observable on-chain state lets attackers replicate the keeper action without the off-chain infrastructure cost the protocol assumes keepers bear.
+
+*Pattern to detect*:
+- `performUpkeep` / `executeTask` with no `msg.sender` allowlist or commit-reveal
+- Reward calculated as `f(positionSize)` visible before execution
+- No slashing or bond requirement for the caller
+- Contracts: `KeeperRewardDistributor.sol`, `BatchManager.sol`, `LimitOrderManager.sol`
+
+---
+
+## Example 4 — User Griefs Keeper via Commit Queue Spam (DoS)
+
+*Tags*: `keeper`, `crank`, `semi_trusted`
+*Severity*: HIGH
+*Mechanism*: Precondition griefability (SKILL.md Step 6) — user creates unbounded queue depth that causes keeper's upkeep call to exceed the block gas limit.
+
+*Summary*: PoolCommitter (Tracer / Perpetual Pools) has no minimum commit size and no queue depth cap. A malicious user submits thousands of near-zero commits, expanding the array iterated by `executeAllCommitments`. The keeper's `performUpkeep` exceeds block gas limit and the pool cannot update, effectively halting all user positions.
+
+*Why it qualifies*: SKILL.md Step 5 Scenario E and Step 6. The precondition the keeper relies on (a bounded commit array) depends entirely on user-controlled state. No admin action can drain the queue without executing all entries.
+
+*Pattern to detect*:
+- `commit(uint256 amount)` with no `require(amount >= MIN_COMMIT)`
+- `executeAllCommitments()` iterates `commits[]` without a length cap
+- No emergency drain or skip mechanism for malformed entries
+
+---
+
+## Example 5 — Relayer Signed-Order Replay
+
+*Tags*: `relayer`, `operator`, `semi_trusted`
+*Severity*: MEDIUM
+*Mechanism*: Relayer replay — absence of a nonce in the signed order struct lets the same hash be reused for multiple executions; operator can also supply different execute params than the user signed.
+
+*Summary*: Krystal DeFi's `StructHash.Order` has no nonce field. The same signed order hash can be submitted by the operator role multiple times, draining user funds across repeated executions. Additionally, the execute parameters passed at runtime are not verified against the signed order, so the operator can change routing or amounts.
+
+*Why it qualifies*: SKILL.md Step 2 Parameter Abuse and Step 3 Scenario B. The operator (semi-trusted relayer role) is trusted to pass matching params; there is no on-chain enforcement. Replay is a secondary vector from the same root cause.
+
+*Pattern to detect*:
+- EIP-712 `hashStruct` of an order type that lacks a `nonce` or `deadline` field
+- `executeOrder(Order calldata order, ExecParams calldata exec)` where `exec` fields are not part of the signed hash
+- Mapping `executedOrders[hash]` absent or not set atomically before external call
+
+---
+
+## Example 6 — Whitelisted Relayer Debits Wrong Account
+
+*Tags*: `relayer`, `semi_trusted`
+*Severity*: HIGH
+*Mechanism*: Parameter abuse — when `msg.sender` is a whitelisted relayer, a cross-chain operation uses `msg.sender` as the source of funds instead of the intended `from` parameter, debiting the relayer's balance or a different user.
+
+*Summary*: Tapioca DAO's Magnetar contract handles `TOFT_SEND_FROM` operations. When the caller is a whitelisted relayer, the token deduction uses `msg.sender` instead of the `from` field embedded in the payload. This causes either a revert (if the relayer has no balance) or a debit from the wrong account.
+
+*Why it qualifies*: SKILL.md Step 2 Parameter Abuse. The role (whitelisted relayer) is granted trust that collapses the distinction between caller and intended payer. Any cross-chain operation that preserves `msg.sender` through a relay hop is susceptible.
+
+*Pattern to detect*:
+- `onlyWhitelistedRelayer` or equivalent modifier
+- Token transfer uses `msg.sender` rather than a `from` field decoded from calldata
+- Cross-chain message payload contains `from` / `srcSender` that is never validated against `msg.sender`
+
+---
+
+## Example 7 — Crank Fee Drain via Empty-Array Settle
+
+*Tags*: `crank`, `keeper`, `automation`, `semi_trusted`
+*Severity*: HIGH
+*Mechanism*: Crank incentive misalignment — `settle` function pays the keeper fee via a `keep` modifier that runs unconditionally, even when the caller passes empty arrays performing no actual work.
+
+*Summary*: Perennial v2 `KeeperFactory#settle` iterates an `ids` array to settle accounts and pays the caller a keeper fee through the `keep` modifier. Passing an empty array skips the loop entirely but still pays the fee. Any address can call this in a tight loop to drain the entire keeper fee balance, leaving no incentive for legitimate keepers.
+
+*Why it qualifies*: SKILL.md Step 3 Scenario A combined with crank incentive misalignment. The fee payout is not gated on demonstrable work. The attack requires no role and no capital, making it unconditionally exploitable.
+
+*Pattern to detect*:
+- `function settle(bytes32[] calldata ids, ...) external keep(...)`
+- `keep` modifier transfers fee to `msg.sender` before or after the function body regardless of `ids.length`
+- No `require(ids.length > 0)` at the top of the function
+
+---
+
+## Example 8 — Automation Race: Missing Access Control on Reward Completion
+
+*Tags*: `automation`, `relayer`, `bot_race`, `semi_trusted`
+*Severity*: HIGH
+*Mechanism*: Timing abuse — a function intended to be called only by the protocol's designated relayer/automation has no `msg.sender` check, allowing any address to call it first and redirect rewards.
+
+*Summary*: PoolTogether's `rngComplete` in `RngRelayAuction.sol` is meant to be called by the Gelato relayer to finalize an RNG draw and send auction rewards to the designated recipient. The function has no access control. An attacker monitors the mempool for the relayer's pending transaction, front-runs it with a different `_rewardRecipient`, and collects all auction rewards. The legitimate relayer's transaction then reverts or succeeds with zero reward.
+
+*Why it qualifies*: SKILL.md Step 3 Scenario A (Timing Attack). The role (relayer) is assumed to be the exclusive caller but this is not enforced. Front-running is trivially achievable by any observer of the public mempool.
+
+*Pattern to detect*:
+- `function rngComplete(..., address _rewardRecipient)` with no `onlyRelayer` or equivalent
+- Reward distribution uses the caller-supplied `_rewardRecipient` directly
+- Gelato / Chainlink Automation / Keep3r integration where the automation address is known but not validated on-chain
+
+---
+
+## Example 9 — Keeper Omission Creates Rate Staleness Arbitrage
+
+*Tags*: `keeper`, `crank`, `semi_trusted`
+*Severity*: MEDIUM
+*Mechanism*: Omission abuse (SKILL.md Scenario G) — protocol exchange rate only updates when the keeper pushes new data; between updates the rate is stale and arbitrageable by users who observe the pending keeper transaction.
+
+*Summary*: DSR Oracle (Maker cross-chain) accumulates interest continuously on-chain but the `conversionRate` stored in `DSROracleBase` only updates when a keeper calls the update function. During the delay, the stored rate underrepresents true value. Users deposit at the stale (low) rate and exit after the keeper update, capturing risk-free yield. A sudden jump in rate also exposes protocols that consume it to flash-loan attacks timed around the update.
+
+*Why it qualifies*: SKILL.md Step 5 Scenario G (Same-Chain Rate Staleness via Discrete Updates). The keeper is honest but predictable; users can observe the pending update and position accordingly.
+
+*Pattern to detect*:
+- `conversionRate` or equivalent updated only via a permissioned `update()` call, not on every user interaction
+- `getConversionRate()` returns the stored value without applying elapsed-time accrual
+- Keeper update is observable in mempool (public transaction, predictable schedule)
+
+---
+
+## Example 10 — Operator Unchecked Parameter Erases All User Debt
+
+*Tags*: `operator`, `keeper`, `semi_trusted`
+*Severity*: HIGH
+*Mechanism*: Parameter abuse — keeper-callable swap function accepts a `_rewardProportion` parameter with no upper-bound check; setting it above 1e18 applies all swap proceeds to debt repayment, zeroing every user's debt.
+
+*Summary*: Taurus Protocol's `SwapHandler.swapForTau` is callable by the keeper role to swap yield tokens for TAU and distribute proceeds. The `_rewardProportion` parameter controls what fraction goes to debt erasure versus user distribution. With no `require(_rewardProportion <= 1e18)`, a keeper can erase all protocol debt in one call. TAU becomes unbacked, effectively worthless.
+
+*Why it qualifies*: SKILL.md Step 2 Parameter Abuse, Step 3 Scenario B, and Step 4 (no rate limit or parameter constraint on the keeper action). The keeper role has a legitimate reason to call the function but can use an out-of-range value to produce catastrophic state.
+
+*Pattern to detect*:
+- `swapForTau(uint256 _rewardProportion, ...)` or analogous function callable by `KEEPER_ROLE`
+- `_rewardProportion` used as a multiplier in debt accounting without `<= 1e18` guard
+- No timelock or multisig on the keeper role
+
+
 ## Step Execution Checklist (MANDATORY)
 
 > **CRITICAL**: You MUST report completion status for ALL steps. Both directions (role->user AND user->role) are equally important.
