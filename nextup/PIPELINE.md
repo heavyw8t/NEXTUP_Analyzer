@@ -197,12 +197,30 @@ Files: `agents/skills/{LANGUAGE}/**/SKILL.md`.
 #### Step 2b.1: Injectable skills
 Reads injectable skills from `agents/skills/injectable/{skill-name}/SKILL.md`. Breadth agents get only a 1-line summary per section (under 200 tokens). Depth agents get dedicated Injectable Investigation Agents (sonnet, 1 per domain), spawned alongside the main depth agents.
 
-Each skill directory additionally carries up to three sidecar files that the injectable investigation agent reads after `SKILL.md`:
-- `candidates.jsonl`: raw regex-filtered pool of Solodit rows scoped to this skill's domain (for auditor reference, not consumed at runtime).
-- `local_examples.md`: 5-10 curated real-world findings from the local CSV index with row-id citations, in a structured `Pattern / Where it hit / Severity / Source / Summary / Map to` template (20 skills covered, 162 entries total).
-- `web_examples.md`: 5-10 structured findings sourced from WebSearch / tavily_search for Solana-ecosystem skills whose local CSV coverage was thin (11 skills covered, 76 entries total, every entry cites a verifiable URL).
+Files: `agents/skills/injectable/**/SKILL.md`.
 
-Files: `agents/skills/injectable/**/SKILL.md`, `agents/skills/injectable/**/candidates.jsonl`, `agents/skills/injectable/**/local_examples.md`, `agents/skills/injectable/**/web_examples.md`.
+#### Step 2b.2: Real-world example backing
+
+Many SKILL.md files (both language-tree and injectable) carry an inline `## Real-world examples` section, spliced immediately before the `## Step Execution Checklist`. Depth agents read this section as part of the skill. Each block follows a fixed template:
+
+```
+- Pattern: <one-line mechanism>
+  Where it hit: <protocol / function / file>
+  Severity: HIGH | MEDIUM | CRITICAL
+  Source: Solodit (row_id N)  OR  <URL>
+  Summary: <2-3 sentences>
+  Map to: <labels from Section 0 marker seed list>
+```
+
+Coverage as of commit c5bce61 (post-wave 2 + bit-shift): ~73 skills carry the section. Sources come from two pipelines:
+- Local Solodit-derived pool: per-skill regex + language filter against `solodit_findings.dedup.csv`, then a Sonnet selection agent picks 5-10 best-fitting rows and deduplicates HIGH/MEDIUM mechanism-twins. Output goes under `### From the local Solodit-derived corpus` with `row_id` citations.
+- Web-sourced pool: for skills whose local pool was < 5, a WebSearch / tavily_search agent sources findings from Solodit, Cantina, Sherlock, Code4rena, OtterSec / Halborn / Neodyme / MoveBit / Zellic published audits, CVE/GHSA advisories, and protocol post-mortems. Output goes under `### From web-sourced audit reports` with verifiable URL citations.
+
+The `## Real-world examples` section feeds two downstream consumers:
+1. Phase 4b.4 precedent scout (below). The scout uses each example's `Pattern` and `Where it hit` lines as grep seeds across the scope to find other locations that may be vulnerable to the same class.
+2. Phase 5 verification. The `security-verifier` agent's Step 0 consults the section first; a matched example produces the strongest precedent signal and lets the verifier skip redundant `get_similar_findings` calls.
+
+Raw candidate pools are cached at `agents/skills/**/candidates.jsonl` but gitignored (regenerable from the CSV). The selection and web sidecars (`local_examples.md`, `web_examples.md`) are inlined into each SKILL.md and deleted after splicing.
 
 #### Step 2c: Agent prompt structure
 Assembles each agent prompt in the canonical form: role header, protocol context, task (instantiated template), targeted-sweep strategy, artifact list, output location, and the SCOPE CONTAINMENT closing directive (critical rule 5a).
