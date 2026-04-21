@@ -14,7 +14,7 @@ For each finding in `{SCRATCHPAD}/analysis_<injectable_skill>.md`:
 ## Scout agent prompt template
 
 ```
-Task(subagent_type="general-purpose", model="haiku", prompt="
+Task(subagent_type="general-purpose", model="sonnet", prompt="
 You are a PRECEDENT-SCOUT agent. Your job is to find OTHER locations in the scope that may be vulnerable to the same class of problem as the parent finding.
 
 PARENT FINDING:
@@ -95,7 +95,7 @@ Per `rules/phase4-confidence-scoring.md`:
 
 ## Cost
 
-One haiku per injectable-skill finding. A typical Core run produces 4-10 injectable findings, Thorough 8-20. Total added cost: 4-20 haiku agents per audit. Each scout is capped at 30 Grep/Read calls and finishes in under 60s.
+One sonnet per injectable-skill finding. A typical Core run produces 4-10 injectable findings, Thorough 8-20. Total added cost: 4-20 sonnet agents per audit. Each scout is capped at 30 Grep/Read calls and finishes in under 60s.
 
 ## Light-mode behavior
 

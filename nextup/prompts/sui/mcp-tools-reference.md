@@ -159,15 +159,15 @@ SOLANA_FENDER_AVAILABLE = N/A       # Not applicable to Sui Move
 
 | Task Type | Default Model | Budget Degradation (>15 agents) |
 |-----------|--------------|--------------------------------|
-| Scoring agent | haiku | haiku (no change) |
-| Index agent (6a) | haiku | haiku (no change) |
+| Scoring agent | sonnet | sonnet (no change) |
+| Index agent (6a) | sonnet | sonnet (no change) |
 | Breadth agents | sonnet | sonnet (no change) |
 | Depth agents | specialized (depth-*) | specialized (no change) |
 | Blind spot scanners | sonnet (general-purpose) | sonnet (no change) |
 | Validation sweep | sonnet (general-purpose) | sonnet (no change) |
 | Critical+High tier writer (6b) | opus | opus (no change -- quality critical) |
-| Medium tier writer (6b) | sonnet | haiku (if >15 agents used) |
-| Low+Info tier writer (6b) | sonnet | haiku (if >15 agents used) |
-| Assembler (6c) | haiku (<=25 findings), sonnet (>25) | sonnet if >25 (no change) |
+| Medium tier writer (6b) | sonnet | sonnet (if >15 agents used) |
+| Low+Info tier writer (6b) | sonnet | sonnet (if >15 agents used) |
+| Assembler (6c) | sonnet (<=25 findings), sonnet (>25) | sonnet if >25 (no change) |
 
 **Optional skill skip**: If total agent count > 15, skip optional skills to conserve budget.

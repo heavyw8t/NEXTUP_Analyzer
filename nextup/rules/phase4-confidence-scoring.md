@@ -1,7 +1,7 @@
 # Phase 4: Confidence Scoring & Adaptive Depth
 
 > **Usage**: Orchestrator references this file during the Adaptive Depth Loop in Phase 4b.
-> The scoring agent (haiku) uses the formulas below. The orchestrator uses the thresholds for routing.
+> The scoring agent (sonnet) uses the formulas below. The orchestrator uses the thresholds for routing.
 
 ---
 
@@ -140,7 +140,7 @@ Each finding card sent to iteration 2+ agents contains ONLY:
 1. **Monotonic confidence**: Confidence can only increase or stay flat between iterations. Evidence from prior iterations is preserved.
 2. **New evidence required**: Score increase requires at least one NEW evidence tag not present in the previous iteration's scoring input.
 3. **No self-referential scoring**: The scoring agent scores based on evidence artifacts in the scratchpad files, not on the depth agent's self-reported confidence.
-4. **Scoring agent model**: Always haiku (mechanical task - formula application, not reasoning).
+4. **Scoring agent model**: Always sonnet (upgraded from haiku on 2026-04-21 alongside the rest of the haiku roster).
 
 ---
 

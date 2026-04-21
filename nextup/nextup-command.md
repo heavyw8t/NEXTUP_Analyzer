@@ -87,7 +87,7 @@ AskUserQuestion(questions=[{
     {
       label: "Light (Pro plan)",
       description: "Lightweight audit — all Sonnet agents, fits Pro rate limits",
-      preview: "~15-18 agents (all Sonnet/Haiku — no Opus)\n\nPipeline:\n  Recon (2) → Breadth (2-3) → NEXTUP (extract+combine,\n  no hypothesize) → Inventory → Depth (4 merged)\n  → Chain (1) → Verify Medium+ → Report ALL (2)\n\nReports all severities. PoC verification targets Medium+.\n\nSkips:\n  · RAG meta-buffer + fork ancestry\n  · NEXTUP hypothesize step (budget)\n  · Semantic invariants\n  · Niche agents\n  · Confidence scoring + RAG Sweep\n  · Invariant/Medusa fuzz\n\nBest for: Pro plan, codebases < 3000 lines"
+      preview: "~15-18 agents (all Sonnet + 1 opus dedup sweep)\n\nPipeline:\n  Recon (2) → Breadth (2-3) → NEXTUP (extract+combine,\n  no hypothesize) → Inventory → Depth (4 merged)\n  → Chain (1) → Verify Medium+ → Report ALL (2)\n  → Phase 6b.5 opus dedup sweep (mandatory)\n\nReports all severities. PoC verification targets Medium+.\n\nSkips:\n  · RAG meta-buffer + fork ancestry\n  · NEXTUP hypothesize step (budget)\n  · Semantic invariants\n  · Niche agents\n  · Confidence scoring + RAG Sweep\n  · Invariant/Medusa fuzz\n\nBest for: Pro plan, codebases < 3000 lines"
     },
     {
       label: "Core (Recommended)",
@@ -160,7 +160,7 @@ AskUserQuestion(questions=[{
     },
     {
       label: "Yes, enable trace mode",
-      description: "After the report is assembled, one extra haiku agent reconstructs the full finding lifecycle from scratchpad files and writes AUDIT_TRACE.md. No impact on the rest of the pipeline."
+      description: "After the report is assembled, one extra sonnet agent reconstructs the full finding lifecycle from scratchpad files and writes AUDIT_TRACE.md. No impact on the rest of the pipeline."
     }
   ]
 }])
@@ -572,20 +572,20 @@ Detect the target language before anything else:
 | **Phase 4c** | Chain Analysis | Hypotheses + chains | 1 sonnet (merged) | 2 agents | 2 agents + iter 2 |
 | **Phase 5** | Verifiers | PoC tests (Medium+) | Medium+ (sonnet) | Medium+ | ALL severities + fuzz |
 | **Phase 5.1** | Skeptic-Judge | Adversarial re-verify | Skip | Skip | HIGH/CRIT |
-| **Phase 6** | Report pipeline | AUDIT_REPORT.md | 2 agents (sonnet+haiku) | 5 agents | 5 agents |
+| **Phase 6** | Report pipeline | AUDIT_REPORT.md | 2 sonnet + 1 opus dedup | 5 sonnet + 1 opus dedup | 5 sonnet + 1 opus dedup |
 
 ### Light Mode Orchestration
 
 When `MODE == light`, the orchestrator applies these overrides:
 
-1. **All agents use Sonnet or Haiku** — no Opus spawns. Use `model="sonnet"` for all analysis/verification agents, `model="haiku"` for assembler only.
+1. **All agents use Sonnet** (except the mandatory Phase 6b.5 opus dedup sweep). Use `model="sonnet"` for all analysis, verification, scoring, scout, judge, assembler, and trace agents. The only opus spawn in Light mode is Phase 6b.5 Final Dedup Sweep.
 2. **Recon**: Spawn 2 sonnet agents (not 4). Agent L1 = build + static analysis + tests (Tasks 1,2,8,9). Agent L2 = docs + patterns + surface + templates (Tasks 3,4,5,6,7,10). Skip RAG meta-buffer (Task 0) and fork ancestry entirely.
 3. **Breadth**: Cap at 2-3 sonnet agents (not 2-7 opus). Use same merge hierarchy.
 4. **Semantic Invariants**: Skip entirely. Depth agents read `state_variables.md` directly.
 5. **Depth Loop**: Spawn 4 merged sonnet agents — (a) combined token-flow + state-trace, (b) combined edge-case + external, (c) combined scanner A+B+C, (d) validation sweep. No niche agents, no injectable investigation agents. Iteration 1 only, no confidence scoring. **Note**: Merges (a) and (c) are deliberate exceptions to the standard merge hierarchy — token-flow + state-trace and 3-scanner compression reduce agent count at the cost of per-domain attention depth. This is a known tradeoff accepted for Pro plan rate limit compliance.
 6. **Chain Analysis**: Single sonnet agent performs both enabler enumeration and chain matching in one pass.
 7. **Verification**: ALL Medium+ (same scope as Core), but all verifiers are sonnet.
-8. **Report**: 1 sonnet writer (all tiers) + 1 haiku assembler. No separate index agent — writer handles ID assignment inline.
+8. **Report**: 1 sonnet writer (all tiers) + 1 sonnet assembler, with the mandatory 1 opus dedup sweep (Phase 6b.5) between them. No separate index agent; writer handles ID assignment inline.
 9. **Report disclaimer**: Include at the top of the report: *"This audit was performed in Light mode (all Sonnet agents). For maximum coverage, use Core or Thorough mode with a Max plan."*
 
 ---
@@ -1083,7 +1083,7 @@ The orchestrator runs the full loop autonomously:
    - **Niche agents**: For each REQUIRED niche agent in `template_recommendations.md` → `Niche Agents` section, read its definition from `{NEXTUP_HOME}/agents/skills/niche/{name}/SKILL.md` and spawn alongside depth agents. Each niche agent = 1 budget slot.
    - **Timeout split-and-retry**: If any agent times out, split its findings into 2 "lite" agents (max 3 findings each, no static analyzer, max 5 files). 2 lite agents = 1 budget unit.
 
-2. **Score all findings** (MANDATORY for Core/Thorough — Light mode skips scoring). Orchestrator MUST spawn the scoring agent and await `confidence_scores.md` before deciding whether to proceed to iteration 2. Skipping scoring to "go straight to chain analysis" is a VIOLATION. Spawn haiku scoring agent → `confidence_scores.md`
+2. **Score all findings** (MANDATORY for Core/Thorough — Light mode skips scoring). Orchestrator MUST spawn the scoring agent and await `confidence_scores.md` before deciding whether to proceed to iteration 2. Skipping scoring to "go straight to chain analysis" is a VIOLATION. Spawn sonnet scoring agent → `confidence_scores.md`
    - **Core mode**: 2-axis scoring (Evidence x 0.5 + Analysis Quality x 0.5)
    - **Thorough mode**: 4-axis scoring (Evidence x 0.25 + Consensus x 0.25 + Analysis Quality x 0.3 + RAG Match x 0.2)
    - CONFIDENT (>= 0.7): no more depth needed
@@ -1136,7 +1136,7 @@ After ALL standard Phase 5 verifiers complete:
 1. Identify all HIGH/CRIT findings with standard verdicts
 2. For EACH, spawn a skeptic agent (sonnet) with INVERSION MANDATE
 3. If skeptic AGREES → final verdict = standard verdict (high confidence)
-4. If skeptic DISAGREES → spawn haiku judge ("prove it or lose it" — stronger mechanical evidence wins)
+4. If skeptic DISAGREES → spawn sonnet judge ("prove it or lose it" — stronger mechanical evidence wins)
 5. Apply final verdict per the ruling table in the verification prompt
 
 **Skip in Light and Core mode.**
@@ -1154,7 +1154,7 @@ After ALL verifiers complete:
 
 ### Phase 6: Report Generation
 
-> **Light mode override**: Do NOT read `{NEXTUP_HOME}/rules/phase6-report-prompts.md` for the writer pipeline. Instead, spawn 2 agents: (1) a single sonnet writer handling ID assignment, root-cause consolidation, and all severity tiers inline; (2) a haiku assembler that merges the writer output with the report header template. No separate index agent or tier-split writers. Between these two agents, the orchestrator MUST run Step 6b.5 (Final Dedup Sweep) per the section below. Include the Light mode disclaimer per override #9.
+> **Light mode override**: Do NOT read `{NEXTUP_HOME}/rules/phase6-report-prompts.md` for the writer pipeline. Instead, spawn 2 agents: (1) a single sonnet writer handling ID assignment, root-cause consolidation, and all severity tiers inline; (2) a sonnet assembler that merges the writer output with the report header template. No separate index agent or tier-split writers. Between these two agents, the orchestrator MUST run Step 6b.5 (Final Dedup Sweep) per the section below. Include the Light mode disclaimer per override #9.
 
 > **Core/Thorough**: Read `{NEXTUP_HOME}/rules/phase6-report-prompts.md` and follow the full 6-agent pipeline (Index → 3 Tier Writers → Final Dedup Sweep → Assembler).
 

@@ -2,7 +2,7 @@
 
 > **Purpose**: Filter trivially invalid findings before burning verification budget, enrich surviving findings with adversarial invalidation hints and external protocol research.
 > **Trigger**: Always runs at the start of Phase 5, before spawning any verification agents.
-> **Budget**: 1 haiku batch agent (selector) + 0-1 sonnet agents (external research). Negligible cost.
+> **Budget**: 1 sonnet batch agent (selector) + 0-1 sonnet agents (external research). Negligible cost.
 > **Artifacts consumed by**: Phase 5 verifier agents (enriched prompts), Phase 5.2 Final Validation agents.
 
 ---
@@ -14,7 +14,7 @@ Phase 4c (Chain Analysis)
     ↓
 Phase 5 Pre-Screen
     Step 0a: Early Exit Check (orchestrator inline)
-    Step 0b: Invalidation Library Selector (haiku, batched)
+    Step 0b: Invalidation Library Selector (sonnet, batched)
     Step 0c: External Protocol Research (sonnet, parallel, conditional)
     ↓
 Phase 5: Verification (verifiers receive pre-screen enrichment)
@@ -72,12 +72,12 @@ Write to `{SCRATCHPAD}/prescreen_early_exit.md`:
 
 ---
 
-## Step 0b: Invalidation Library Selector (Haiku, Batched)
+## Step 0b: Invalidation Library Selector (Sonnet, Batched)
 
-Spawn a single haiku agent that processes ALL surviving findings in one batch:
+Spawn a single sonnet agent that processes ALL surviving findings in one batch:
 
 ```
-Task(subagent_type="general-purpose", model="haiku", prompt="
+Task(subagent_type="general-purpose", model="sonnet", prompt="
 You are the Invalidation Library Selector. For each finding below, pick the 2-3 most applicable generic invalidation reasons from the library. These will be passed to verifier agents as adversarial hints.
 
 ## Findings to Screen
@@ -247,7 +247,7 @@ Add this rule to the ANTI-HALLUCINATION RULES section of ALL verification prompt
 | File | Written By | Contents |
 |------|-----------|----------|
 | `prescreen_early_exit.md` | Orchestrator (Step 0a) | Broken refs, trusted-actor caps, surviving count |
-| `prescreen_invalidation_hints.md` | Haiku selector (Step 0b) | 2-3 invalidation hints per finding |
+| `prescreen_invalidation_hints.md` | Sonnet selector (Step 0b) | 2-3 invalidation hints per finding |
 | `prescreen_external_research.md` | Sonnet researcher (Step 0c) | External protocol claim verification results |
 
 ---
@@ -257,7 +257,7 @@ Add this rule to the ANTI-HALLUCINATION RULES section of ALL verification prompt
 | Component | Cost | Model |
 |-----------|------|-------|
 | Early exit check | 0 (orchestrator inline) | - |
-| Invalidation selector | 1 agent | haiku |
+| Invalidation selector | 1 agent | sonnet |
 | External research | 0-1 agent (conditional) | sonnet |
 | **Typical total** | **1-2 agents** | |
 

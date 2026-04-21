@@ -153,7 +153,7 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   // ═══ STEP 4b.4: Injectable example-precedent scout ═══
   // Core and Thorough only. Skipped in Light (no injectable investigation agents ran).
   // Full spec: {NEXTUP_HOME}/rules/phase4b-precedent-scout.md
-  // Per-scout spawn: one haiku agent per finding in depth_{d}_injectable_findings.md
+  // Per-scout spawn: one sonnet agent per finding in depth_{d}_injectable_findings.md
   // Writes: {SCRATCHPAD}/precedent_{FINDING_ID}.md
   // Populates the Example precedent: / precedent_match signal read by scoring Axis 4.
   if MODE != light and len(injectable_agents) > 0:
@@ -162,7 +162,7 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
     scout_manifest = []
     for f in injectable_findings:
       examples_block = splice_real_world_examples(f.parent_skill_path)
-      spawn precedent_scout(finding=f, examples=examples_block, model="haiku")
+      spawn precedent_scout(finding=f, examples=examples_block, model="sonnet")
       scout_manifest.append((f.id, SCRATCHPAD + "/precedent_" + f.id + ".md"))
     await all scouts
     for (fid, path) in scout_manifest:
@@ -173,7 +173,7 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
   // ═══ SCORE all findings ═══
   // NOTE: Sibling Propagation merged back into Validation Sweep as CHECK 9.
   // Saves 1 depth budget slot. Validation Sweep already reads findings_inventory.md.
-  // Spawn scoring agent (haiku - use Scoring Agent Template below)
+  // Spawn scoring agent (sonnet - use Scoring Agent Template below)
   // Writes {SCRATCHPAD}/confidence_scores.md
   await scoring_agent
 
@@ -322,7 +322,7 @@ ADAPTIVE_DEPTH_LOOP(findings_inventory):
 ## Scoring Pipeline
 
 > **Spawn after**: Each iteration of the depth loop.
-> **Model**: Always haiku (formula application, not reasoning).
+> **Model**: Always sonnet (formula application, not reasoning).
 > Pre-compute consensus inline, then batch findings for parallel scoring to prevent single-agent overload on large audits.
 
 ### Pre-Score: Consensus Pre-Computation (Orchestrator Inline)
@@ -338,7 +338,7 @@ Before spawning scoring agents, orchestrator produces `{SCRATCHPAD}/consensus_ma
 ### Batch Scoring
 
 Split all findings into domain batches of ≤15 findings each (token-flow, state-trace, edge-case, external, access-control, misc).
-Spawn parallel haiku scoring agents per batch. Each receives:
+Spawn parallel sonnet scoring agents per batch. Each receives:
 - Its batch of findings ONLY (extracted from source files)
 - `{SCRATCHPAD}/consensus_map.md` (pre-computed Axis 2, shared across all batches)
 - Scoring formula (unchanged - Axes 1,3,4 from finding data; Axis 2 from consensus_map)
@@ -348,7 +348,7 @@ After all return: merge `confidence_scores_batch_*.md` into `confidence_scores.m
 ### Scoring Agent Template (per batch)
 
 ```
-Task(subagent_type="general-purpose", model="haiku", prompt="
+Task(subagent_type="general-purpose", model="sonnet", prompt="
 You are the Confidence Scoring Agent (Batch: {DOMAIN}). You compute confidence scores for a batch of Solana audit findings using a fixed formula.
 
 ## Your Inputs

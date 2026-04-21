@@ -238,7 +238,7 @@ Return: CONFIRMED/FALSE_POSITIVE/CONTESTED + evidence tag + 3-sentence justifica
 
 > **Purpose**: Challenge the standard verifier's reasoning. Nobody audits the auditor - this step does.
 > **Trigger**: Thorough mode, findings with severity HIGH or CRITICAL, after standard Phase 5 verification completes.
-> **Architecture**: Standard verifier → Skeptic agent (opus) → Judge agent (haiku, only if disagreement)
+> **Architecture**: Standard verifier → Skeptic agent (opus) → Judge agent (sonnet, only if disagreement)
 
 ### Step 1: Spawn Skeptic Agent (per finding)
 
@@ -294,7 +294,7 @@ After skeptic agent returns:
 ### Step 3: Spawn Judge Agent (only on disagreement)
 
 ```
-Task(subagent_type="general-purpose", model="haiku", prompt="
+Task(subagent_type="general-purpose", model="sonnet", prompt="
 You are the JUDGE. Two verifiers disagree on hypothesis {HYPOTHESIS_ID}. Your job is to determine which argument has STRONGER mechanical evidence.
 
 ## Prove It or Lose It
@@ -337,5 +337,5 @@ Return: 'RULING: {final_verdict} - {STANDARD_WINS/SKEPTIC_WINS/CONTESTED}'
 | Component | Cost |
 |-----------|------|
 | Skeptic agents | 1 opus per HIGH/CRIT finding (~3-8 agents typical) |
-| Judge agents | 1 haiku per disagreement (~0-3 agents typical) |
+| Judge agents | 1 sonnet per disagreement (~0-3 agents typical) |
 | **Total** | ~3-11 agents (only in Thorough mode) |

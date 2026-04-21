@@ -13,10 +13,10 @@ The orchestrator invokes trace reconstruction exactly once, after Phase 6 (the R
 
 ## Agent Spawn
 
-Spawn ONE agent. Model: `haiku`. Subagent type: `general-purpose` (required for Write tool per CLAUDE.md rule). Use the prompt template below verbatim, substituting placeholders.
+Spawn ONE agent. Model: `sonnet`. Subagent type: `general-purpose` (required for Write tool per CLAUDE.md rule). Use the prompt template below verbatim, substituting placeholders.
 
 ```
-Task(subagent_type="general-purpose", model="haiku", prompt="
+Task(subagent_type="general-purpose", model="sonnet", prompt="
 You are the Trace Reconstruction Agent for NEXTUP. The audit has already finished and AUDIT_REPORT.md has been written. Your job is to reconstruct the full lifecycle of every finding from the scratchpad files that already exist, then write a single trace document.
 
 You do NOT analyze code. You do NOT produce new findings. You only read existing scratchpad files, stitch their contents into a lifecycle narrative per finding, and emit a summary.
@@ -224,5 +224,5 @@ When reading `{SCRATCHPAD}/trace_issues.md`, the trace-reconstructor agent must 
 - If more than 5 errors of the same message-prefix come from the same agent, collapse them into a single row with a `(N occurrences)` suffix and list the first and last timestamps.
 - If an agent appears in trace_issues.md but produced no output file in scratchpad, flag it explicitly in the "Issues grouped by agent" summary as `agent-name: FAILED TO PRODUCE OUTPUT`.
 
-This extension is part of the haiku agent's workload and adds no extra spawns.
+This extension is part of the sonnet agent's workload and adds no extra spawns.
 

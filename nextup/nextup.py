@@ -1672,7 +1672,7 @@ def estimate_cost(target: str, mode: str,
     orch_base = PROMPT_BASE + 15_000  # CLAUDE.md + nextup.md loaded
 
     if mode == "light":
-        # Light mode: all sonnet/haiku, no opus, fewer agents, merged phases
+        # Light mode: all sonnet + 1 opus dedup sweep, fewer agents, merged phases
         bc_light = min(3, max(2, bc))  # cap breadth at 3
         est_findings_light = bc_light * 4  # fewer findings from sonnet breadth
         vc_light = min(4, max(2, est_findings_light // 3))
@@ -1685,7 +1685,8 @@ def estimate_cost(target: str, mode: str,
             ("Chain",            1, "sonnet", PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
             ("Verification",     vc_light, "sonnet", PROMPT_BASE + SKILL_AVG + int(src_tok * 0.25) + ARTIFACT_SMALL, 12),
             ("Report",           1, "sonnet", PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
-            ("Report assembler", 1, "haiku",  PROMPT_BASE + ARTIFACT_LARGE * 2, 6),
+            ("Report assembler", 1, "sonnet",  PROMPT_BASE + ARTIFACT_LARGE * 2, 6),
+            ("Final Dedup Sweep", 1, "opus", PROMPT_BASE + ARTIFACT_LARGE * 3, 6),
             ("Orchestrator",     1, "sonnet", orch_base, 20),
         ]
     else:
@@ -1701,12 +1702,13 @@ def estimate_cost(target: str, mode: str,
             ("Scanners",         3, "sonnet", PROMPT_BASE + int(src_tok * 0.3) + ARTIFACT_LARGE, 8),
             ("Validation Sweep", 1, "sonnet", PROMPT_BASE + int(src_tok * 0.3) + ARTIFACT_LARGE, 8),
             ("Niche agents",     3, "sonnet", PROMPT_BASE + SKILL_AVG + int(src_tok * 0.3) + ARTIFACT_SMALL, 8),
-            ("RAG + Scoring",    3, "haiku",  PROMPT_BASE + ARTIFACT_LARGE, 6),
+            ("RAG + Scoring",    3, "sonnet",  PROMPT_BASE + ARTIFACT_LARGE, 6),
             ("Chain Analysis",   2, "opus",   PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
             ("Verification",    vc, "opus",   PROMPT_BASE + SKILL_AVG + int(src_tok * 0.25) + ARTIFACT_SMALL, 14),
             ("Report (opus)",    1, "opus",   PROMPT_BASE + ARTIFACT_LARGE * 3, 8),
             ("Report (sonnet)",  2, "sonnet", PROMPT_BASE + ARTIFACT_LARGE * 2, 8),
-            ("Report (haiku)",   2, "haiku",  PROMPT_BASE + ARTIFACT_LARGE * 3, 6),
+            ("Report (sonnet)",   2, "sonnet",  PROMPT_BASE + ARTIFACT_LARGE * 3, 6),
+            ("Final Dedup Sweep", 1, "opus", PROMPT_BASE + ARTIFACT_LARGE * 3, 6),
             ("Orchestrator",     1, "opus",   orch_base, 25),
         ]
 
@@ -1734,7 +1736,7 @@ def estimate_cost(target: str, mode: str,
             ("Extra verify", 2, "sonnet", PROMPT_BASE + SKILL_AVG + int(src_tok * 0.2) + ARTIFACT_SMALL, 10),
             ("Skeptic",      est_high_crit, "sonnet",
              PROMPT_BASE + SKILL_AVG + int(src_tok * 0.25) + ARTIFACT_SMALL, 10),
-            ("Judge",        est_judge, "haiku",
+            ("Judge",        est_judge, "sonnet",
              PROMPT_BASE + ARTIFACT_SMALL * 2, 4),
             ("Orch. extra",  1, "opus",   orch_base, 15),  # reduced: context compression limits real accumulation
         ]

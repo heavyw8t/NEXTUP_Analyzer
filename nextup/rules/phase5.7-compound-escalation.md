@@ -286,7 +286,7 @@ Apply the same Phase 5.1 Skeptic-Judge protocol from `{NEXTUP_HOME}/prompts/{LAN
 
 1. Spawn skeptic agent (opus) with INVERSION MANDATE for each HIGH/CRIT compound
 2. Skeptic tries to disprove the compound path specifically — are all steps actually chainable? Does the combined state actually enable the claimed impact?
-3. If skeptic disagrees → haiku judge adjudicates
+3. If skeptic disagrees → sonnet judge adjudicates
 4. Apply final verdict
 
 ---
@@ -329,7 +329,7 @@ Phase 5.7 Complete:
 | Finding collection + assignment | 0 (orchestrator inline) | - |
 | Combination agents | 2-5 | opus (Core/Thorough), sonnet (Light) |
 | Verification (per escalation) | 1 per finding | sonnet (Medium) / opus (High+) |
-| Skeptic-Judge (Thorough, High+) | 1-2 per finding | opus + haiku |
+| Skeptic-Judge (Thorough, High+) | 1-2 per finding | opus + sonnet |
 | **Typical total** | **3-10 agents** | |
 
 If zero findings escalate (common for well-audited codebases), cost is just the 2-5 combination agents.

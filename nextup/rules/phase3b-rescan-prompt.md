@@ -131,7 +131,7 @@ After Phase 3b re-scan loop AND Phase 3c per-contract analysis both exit:
 
 1. If re-scan or per-contract analysis produced new findings:
    - Re-run Phase 4a inventory agent with ADDITIONAL input: `{SCRATCHPAD}/analysis_rescan_*.md` and `{SCRATCHPAD}/analysis_percontract_*.md`
-   - Or: spawn a lightweight merge agent (haiku) that reads findings_inventory.md + rescan files + per-contract files and appends new entries
+   - Or: spawn a lightweight merge agent (sonnet) that reads findings_inventory.md + rescan files + per-contract files and appends new entries
 2. If neither produced new findings: skip merge, proceed to Phase 4a.5
 
 The merge must complete BEFORE Phase 4a.5 (semantic invariants) so that new findings are included in the invariant analysis and depth agent inputs.
@@ -144,8 +144,8 @@ The merge must complete BEFORE Phase 4a.5 (semantic invariants) so that new find
 |-----------|------|
 | Iteration 1 | 2-3 sonnet agents |
 | Iteration 2 (conditional) | 2-3 sonnet agents |
-| Inventory merge | 1 haiku agent (if new findings) |
-| **Total max** | **7 sonnet + 1 haiku** |
+| Inventory merge | 1 sonnet agent (if new findings) |
+| **Total max** | **7 sonnet + 1 sonnet** |
 
 Sonnet agents are ~3-5x cheaper than opus. Total re-scan cost is roughly equivalent to 1-2 opus breadth agents from pass 1.
 

@@ -44,8 +44,8 @@ One line per step. Expanded section below.
 - Step 4a: Inventory agent merges breadth findings, NEXTUP hypotheses, and static-analysis promotions. Dedups by root cause (see `prompts/{LANGUAGE}/phase4a-inventory-prompt.md` TASK 1.0). Emits the side-effect trace.
 - Step 4a.5: Semantic invariant pre-computation (Pass 1 Core + Thorough, Pass 2 Thorough).
 - Step 4b iter 1: Spawn 4 depth agents + 3 scanners + validation sweep + niche agents.
-- Step 4b.4: Injectable example-precedent scout (Core, Thorough). One haiku per injectable finding, writes `precedent_{id}.md`, post-processed into findings_inventory.md as new candidates or Related locations footers. Feeds the Axis 4 RAG Match precedent bonus.
-- Step 4b scoring: Haiku scoring agent writes `confidence_scores.md` (2-axis Core, 4-axis Thorough). Reads precedent output for Axis 4 bonus.
+- Step 4b.4: Injectable example-precedent scout (Core, Thorough). One sonnet per injectable finding, writes `precedent_{id}.md`, post-processed into findings_inventory.md as new candidates or Related locations footers. Feeds the Axis 4 RAG Match precedent bonus.
+- Step 4b scoring: Sonnet scoring agent writes `confidence_scores.md` (2-axis Core, 4-axis Thorough). Reads precedent output for Axis 4 bonus.
 - Step 4b iter 2 gate (mechanical): `iter2_required = exists uncertain f with severity >= Medium`. Fires Devil's Advocate depth agents only when the gate passes (Thorough only).
 - Step 4b iter 3 gate (mechanical): Fires iff `progress(iter_2)` = at least one uncertain Medium+ finding's composite confidence rose by >= 0.10 with NEW evidence per AD-5 (Thorough only). Otherwise remaining uncertain are forced to CONTESTED.
 - Step 4b design stress: Unconditional 1-slot Design Stress Testing Agent (Thorough only).
@@ -56,7 +56,7 @@ One line per step. Expanded section below.
 ### Phase 5: Pre-Screen, Verification, Validation, Escalation
 - Step 5 pre Step 0a: Early exit writes `prescreen_early_exit.md` (broken refs → FALSE_POSITIVE, pure trusted-actor → Low cap).
 - Step 5 pre Step 0a.filter: MANDATORY orchestrator step that builds `verification_queue.md` = hypotheses.md MINUS FALSE_POSITIVE. Phase 5 verifier spawning uses the queue, not hypotheses.md.
-- Step 5 pre Step 0b: Invalidation selector writes `prescreen_invalidation_hints.md` (haiku, 2-3 hints per surviving finding).
+- Step 5 pre Step 0b: Invalidation selector writes `prescreen_invalidation_hints.md` (sonnet, 2-3 hints per surviving finding).
 - Step 5 pre Step 0c: External protocol research writes `prescreen_external_research.md` (sonnet, conditional on external deps).
 - Step 5 pre Step 0d: MANDATORY orchestrator substitution of `{INVALIDATION_HINTS_FOR_THIS_FINDING}`, `{EXTERNAL_RESEARCH_FOR_THIS_FINDING}`, `{IF_PRESCREEN_HINTS_EXIST}` into each verifier prompt before spawn. Unsubstituted placeholders are a workflow violation.
 - Step 5: Verifiers run PoCs in project test harness (Medium+ for Light / Core, all severities for Thorough).
@@ -257,12 +257,12 @@ Spawns 4 depth agents (token-flow, state-trace, edge-case, external) with NEXTUP
 Files: `prompts/{LANGUAGE}/phase4b-loop.md`, `prompts/{LANGUAGE}/phase4b-depth-templates.md`, `prompts/{LANGUAGE}/phase4b-scanner-templates.md`, `agents/depth-*.md`, `agents/skills/niche/**/SKILL.md`, `investigation_targets.md`.
 
 #### Step 4b.4: Injectable example-precedent scout (Core, Thorough)
-After each injectable investigation agent returns, spawns one haiku precedent-scout per produced finding. The scout receives the parent finding and the parent skill's spliced `## Real-world examples` section, then sweeps the scope with Grep for OTHER locations matching the example patterns. Writes `{SCRATCHPAD}/precedent_{FINDING_ID}.md` listing HIGH-confidence candidates (new findings) and MEDIUM-confidence candidates (appended as `Related locations:` on the parent). Scout is capped at 30 Grep/Read calls per run. Skipped in Light mode since injectable investigation agents do not run there.
+After each injectable investigation agent returns, spawns one sonnet precedent-scout per produced finding. The scout receives the parent finding and the parent skill's spliced `## Real-world examples` section, then sweeps the scope with Grep for OTHER locations matching the example patterns. Writes `{SCRATCHPAD}/precedent_{FINDING_ID}.md` listing HIGH-confidence candidates (new findings) and MEDIUM-confidence candidates (appended as `Related locations:` on the parent). Scout is capped at 30 Grep/Read calls per run. Skipped in Light mode since injectable investigation agents do not run there.
 Files: `rules/phase4b-precedent-scout.md`, `agents/skills/injectable/**/SKILL.md` (for the examples section), `{SCRATCHPAD}/precedent_*.md`, `findings_inventory.md`.
-Tools: `Agent` (general-purpose, model=haiku), `Read`, `Grep`, `Glob`.
+Tools: `Agent` (general-purpose, model=sonnet), `Read`, `Grep`, `Glob`.
 
-#### Step 4b scoring: Haiku scoring agent
-Spawns one haiku agent that reads all depth outputs and writes `confidence_scores.md`. Core uses 2-axis (Evidence 0.5 + Analysis Quality 0.5). Thorough uses 4-axis (Evidence 0.25 + Consensus 0.25 + Analysis Quality 0.3 + RAG Match 0.2). Skipping this step to jump straight to chain analysis is a VIOLATION.
+#### Step 4b scoring: Sonnet scoring agent
+Spawns one sonnet agent that reads all depth outputs and writes `confidence_scores.md`. Core uses 2-axis (Evidence 0.5 + Analysis Quality 0.5). Thorough uses 4-axis (Evidence 0.25 + Consensus 0.25 + Analysis Quality 0.3 + RAG Match 0.2). Skipping this step to jump straight to chain analysis is a VIOLATION.
 Files: `rules/phase4-confidence-scoring.md`, `confidence_scores.md`.
 
 #### Step 4b iter 2 (Thorough only)
@@ -304,7 +304,7 @@ Orchestrator inline. Builds `{SCRATCHPAD}/verification_queue.md` = hypotheses.md
 Files: `verification_queue.md`, `hypotheses.md`, `prescreen_early_exit.md`.
 
 #### Step 5 pre Step 0b: Invalidation selector
-One haiku agent, batched. Reads `rules/invalidation-library.md` and picks 2-3 most-applicable generic invalidation reasons per surviving finding. Writes `prescreen_invalidation_hints.md`.
+One sonnet agent, batched. Reads `rules/invalidation-library.md` and picks 2-3 most-applicable generic invalidation reasons per surviving finding. Writes `prescreen_invalidation_hints.md`.
 Files: `rules/invalidation-library.md`, `rules/phase5-prescreen.md`, `prescreen_invalidation_hints.md`.
 
 #### Step 5 pre Step 0c: External research (conditional)
@@ -322,7 +322,7 @@ Files: `prompts/{LANGUAGE}/phase5-verification-prompt.md`, `rules/phase5-poc-exe
 Tools: native harness per language, `Bash`.
 
 #### Step 5.1: Skeptic-Judge (Thorough only)
-For every HIGH / CRITICAL finding, spawn an opus Skeptic agent with INVERSION MANDATE. If Skeptic AGREES, verdict stands. If Skeptic DISAGREES, spawn a haiku Judge that applies "prove it or lose it": stronger mechanical evidence wins. Skipping with "all PoCs passed so skeptic is unnecessary" is invalid.
+For every HIGH / CRITICAL finding, spawn an opus Skeptic agent with INVERSION MANDATE. If Skeptic AGREES, verdict stands. If Skeptic DISAGREES, spawn a sonnet Judge that applies "prove it or lose it": stronger mechanical evidence wins. Skipping with "all PoCs passed so skeptic is unnecessary" is invalid.
 Files: `prompts/{LANGUAGE}/phase5-verification-prompt.md` (Skeptic-Judge section).
 
 #### Step 5.2: Final opus validation
@@ -354,7 +354,7 @@ One opus agent reads the three tier files (or the Light single-writer file), `re
 Files: `rules/phase6-report-prompts.md` (Step 6b.5 section), `final_dedup.md`.
 
 #### Step 6c: Assembler
-Merges header, TOC, and tier sections (now deduplicated by Step 6b.5) into `AUDIT_REPORT.md`. Light mode replaces 6a + 6b + 6c with a sonnet writer plus haiku assembler and the mandatory 6b.5 opus sweep between them, and includes the Light mode disclaimer. `AUDIT_REPORT.md` is the single combined report for the audit pipeline.
+Merges header, TOC, and tier sections (now deduplicated by Step 6b.5) into `AUDIT_REPORT.md`. Light mode replaces 6a + 6b + 6c with a sonnet writer plus sonnet assembler and the mandatory 6b.5 opus sweep between them, and includes the Light mode disclaimer. `AUDIT_REPORT.md` is the single combined report for the audit pipeline.
 Files: `rules/phase6-report-prompts.md`, `rules/report-template.md`.
 
 ### Phase 4a.NX, detailed
