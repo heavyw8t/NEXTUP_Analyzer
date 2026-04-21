@@ -566,7 +566,7 @@ Detect the target language before anything else:
 | **Phase 3** | Breadth Agents | Findings files | 2-3 sonnet | 2-7 opus | 2-7 opus |
 | **Phase 3b** | Re-Scan + Per-Contract | Masked findings | Skip | Skip | Thorough only |
 | **Phase 4a.NX** | **NEXTUP Combinatorial** | **pieces.json, combos_ranked.json, hypotheses_batch_*.json, investigation_targets.md** | **1 sonnet (hypothesize skipped)** | **1 sonnet + 5-8 sonnet hypothesis** | **1 sonnet + 8-15 sonnet hypothesis** |
-| **Phase 4a** | Inventory Agent | Findings inventory (deduplicated across breadth + NEXTUP + static) | 1 sonnet | 1 sonnet | 1 sonnet |
+| **Phase 4a** | Inventory Agent | Findings inventory (deduplicated across breadth + NEXTUP + static) | 1 opus | 1 opus | 1 opus |
 | **Phase 4a.5** | Semantic Invariant Agent | Write-sites + invariants | Skip | Pass 1 | Pass 1+2 |
 | **Phase 4b** | Depth Loop | Deep analysis | 4 merged sonnet, no scoring | 8+ agents, 2-axis scoring | 8+ agents, 4-axis scoring |
 | **Phase 4c** | Chain Analysis | Hypotheses + chains | 1 sonnet (merged) | 2 agents | 2 agents + iter 2 |
@@ -578,7 +578,7 @@ Detect the target language before anything else:
 
 When `MODE == light`, the orchestrator applies these overrides:
 
-1. **All agents use Sonnet** (except the mandatory Phase 6b.5 opus dedup sweep). Use `model="sonnet"` for all analysis, verification, scoring, scout, judge, assembler, and trace agents. The only opus spawn in Light mode is Phase 6b.5 Final Dedup Sweep.
+1. **All agents use Sonnet** except two mandatory opus carve-outs: Phase 4a Inventory Agent (dedup chokepoint across breadth + NEXTUP + static) and Phase 6b.5 Final Dedup Sweep. Use `model="sonnet"` for all analysis, verification, scoring, scout, judge, assembler, and trace agents. The two opus spawns in Light mode are Phase 4a Inventory and Phase 6b.5.
 2. **Recon**: Spawn 2 sonnet agents (not 4). Agent L1 = build + static analysis + tests (Tasks 1,2,8,9). Agent L2 = docs + patterns + surface + templates (Tasks 3,4,5,6,7,10). Skip RAG meta-buffer (Task 0) and fork ancestry entirely.
 3. **Breadth**: Cap at 2-3 sonnet agents (not 2-7 opus). Use same merge hierarchy.
 4. **Semantic Invariants**: Skip entirely. Depth agents read `state_variables.md` directly.

@@ -22,7 +22,7 @@ You are **NEXTUP**, an autonomous Web3 security auditing agent. When asked to au
 |-----------|-------|------|----------|
 | Target plan | Pro | Max | Max |
 | Orchestrator model | User's session model (Pro default: Sonnet) | Opus | Opus |
-| Agent models | All Sonnet (+ 1 opus dedup sweep) | Opus + Sonnet | Opus + Sonnet |
+| Agent models | All Sonnet + 2 opus (Phase 4a Inventory, Phase 6b.5 Dedup Sweep) | Opus + Sonnet | Opus + Sonnet |
 | Recon | 2 sonnet (no RAG, no fork) | 4 agents (RAG inline) | 4 agents (full RAG) |
 | Breadth agents | 2-3 sonnet | 2-7 opus | 2-7 opus |
 | Breadth re-scan (3b/3c) | Skip | Skip | Full (sonnet, 2 iters + per-contract) |

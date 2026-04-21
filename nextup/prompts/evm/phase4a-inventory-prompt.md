@@ -10,7 +10,7 @@
 ## Inventory Agent
 
 ```
-Task(subagent_type="general-purpose", prompt="
+Task(subagent_type="general-purpose", model="opus", prompt="
 You are the Inventory Agent. You inventory ALL breadth findings AND audit side effect trace coverage in a single pass.
 
 Read ALL files matching {SCRATCHPAD}/analysis_*.md

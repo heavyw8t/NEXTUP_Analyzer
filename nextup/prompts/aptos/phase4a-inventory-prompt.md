@@ -10,7 +10,7 @@
 ## Inventory Agent
 
 ```
-Task(subagent_type="general-purpose", prompt="
+Task(subagent_type="general-purpose", model="opus", prompt="
 You are the Inventory Agent for an Aptos Move module audit.
 
 Read ALL files matching {SCRATCHPAD}/analysis_*.md

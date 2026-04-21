@@ -41,7 +41,7 @@ One line per step. Expanded section below.
 
 ### Phase 4: Synthesis, Depth, Chains
 - Step 4a.NX: NEXTUP combinatorial analysis runs BEFORE inventory. Extract puzzle pieces (1 sonnet), combine + eliminate (Python, zero tokens), hypothesize (Core: 5-8 sonnet, Thorough: 8-15 sonnet; skipped in Light), write `investigation_targets.md` (Part 2).
-- Step 4a: Inventory agent merges breadth findings, NEXTUP hypotheses, and static-analysis promotions. Dedups by root cause (see `prompts/{LANGUAGE}/phase4a-inventory-prompt.md` TASK 1.0). Emits the side-effect trace.
+- Step 4a: Inventory agent (opus, all modes) merges breadth findings, NEXTUP hypotheses, and static-analysis promotions. Dedups by root cause (see `prompts/{LANGUAGE}/phase4a-inventory-prompt.md` TASK 1.0). Emits the side-effect trace.
 - Step 4a.5: Semantic invariant pre-computation (Pass 1 Core + Thorough, Pass 2 Thorough).
 - Step 4b iter 1: Spawn 4 depth agents + 3 scanners + validation sweep + niche agents.
 - Step 4b.4: Injectable example-precedent scout (Core, Thorough). One sonnet per injectable finding, writes `precedent_{id}.md`, post-processed into findings_inventory.md as new candidates or Related locations footers. Feeds the Axis 4 RAG Match precedent bonus.
@@ -245,7 +245,7 @@ Files: `SKILL.md`, `extraction/extract_agent.md`, `hypothesis/hypothesis_agent.m
 Tools: `Agent`, `Bash` (Python combinator), `Read`, `Write`.
 
 #### Step 4a: Inventory + side-effect trace + cross-source dedup
-One sonnet agent reads all `analysis_*.md` files (breadth), `{SCRATCHPAD}/nextup/hypotheses_batch_*.json` (NEXTUP), and static-analysis promotions. Dedups across sources per TASK 1.0 priority: (1) breadth+PoC wins outright, (2) breadth-no-PoC loses only to a NEXTUP hypothesis with stricter source evidence, (3) NEXTUP-vs-NEXTUP goes by feasibility then severity then combo score, (4) static-detector survives only when alone. Losers are merged as `Related locations:` and `Puzzle-piece evidence:` footers on survivors; dropped items go into a `## Dedup Trail` appendix. Assigns IDs: breadth keeps `[XX-N]`, static uses `[SLITHER-N]` / `[SD-N]` / `[SAN-N]`, NEXTUP survivors without breadth match get `[NX-N]`. Writes `findings_inventory.md`, the side-effect trace, and `phase4_gates.md`. Gate 1 BLOCKED means missing breadth agents: must re-spawn before Step 4b.
+One opus agent (upgraded from sonnet on 2026-04-21 because this is the single dedup chokepoint across all finding sources). Reads all `analysis_*.md` files (breadth), `{SCRATCHPAD}/nextup/hypotheses_batch_*.json` (NEXTUP), and static-analysis promotions. Dedups across sources per TASK 1.0 priority: (1) breadth+PoC wins outright, (2) breadth-no-PoC loses only to a NEXTUP hypothesis with stricter source evidence, (3) NEXTUP-vs-NEXTUP goes by feasibility then severity then combo score, (4) static-detector survives only when alone. Losers are merged as `Related locations:` and `Puzzle-piece evidence:` footers on survivors; dropped items go into a `## Dedup Trail` appendix. Assigns IDs: breadth keeps `[XX-N]`, static uses `[SLITHER-N]` / `[SD-N]` / `[SAN-N]`, NEXTUP survivors without breadth match get `[NX-N]`. Writes `findings_inventory.md`, the side-effect trace, and `phase4_gates.md`. Gate 1 BLOCKED means missing breadth agents: must re-spawn before Step 4b.
 Files: `prompts/{LANGUAGE}/phase4a-inventory-prompt.md`, `findings_inventory.md`, `phase4_gates.md`.
 
 #### Step 4a.5: Semantic invariants (Pass 1 and Pass 2)
