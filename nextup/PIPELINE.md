@@ -69,7 +69,8 @@ One line per step. Expanded section below.
 ### Phase 6: Report Generation
 - Step 6a: Index agent assigns finding IDs (Core, Thorough).
 - Step 6b: Tier writer agents draft CRIT / HIGH, MEDIUM, LOW / INFO sections (Core, Thorough).
-- Step 6c: Assembler agent merges tier output with report template. Light uses 2-agent merged override.
+- Step 6b.5: Final Dedup Sweep (opus, unconditional, all modes). One agent reads all tier files (or the Light writer file), identifies duplicates by root cause, keeps the higher-severity survivor, merges loser locations and evidence into the survivor, and rewrites the tier files with losers removed. Writes `final_dedup.md` log.
+- Step 6c: Assembler agent merges tier output with report template. Light uses 2-agent merged override plus the mandatory 6b.5 sweep between them.
 
 ---
 
@@ -348,8 +349,12 @@ One agent assigns final finding IDs (`F-01`, `F-02`, ...), orders by severity, a
 #### Step 6b: Tier writers (Core, Thorough)
 3 agents, one per severity tier (CRIT / HIGH, MEDIUM, LOW / INFO). Each writes the tier section using `rules/report-template.md`.
 
+#### Step 6b.5: Final Dedup Sweep (unconditional, all modes)
+One opus agent reads the three tier files (or the Light single-writer file), `report_index.md`, `findings_inventory.md`, and `chain_hypotheses.md`, identifies duplicates by root cause + exploit mechanism + location overlap, and keeps the higher-severity survivor per the priority table (severity → evidence tag → location count → lowest report ID). Loser evidence (locations, attack variants) merges into the survivor. Tier files are rewritten in place with losers removed. Writes `final_dedup.md` as the audit trail. Runs between tier writers and assembler in all modes; in Light mode this is the one opus carve-out from the all-sonnet rule. If the sweep fails, the orchestrator logs to `violations.md` and proceeds to the assembler on un-deduplicated tier files (degraded mode).
+Files: `rules/phase6-report-prompts.md` (Step 6b.5 section), `final_dedup.md`.
+
 #### Step 6c: Assembler
-Merges header, TOC, and tier sections into `AUDIT_REPORT.md`. Light mode replaces 6a + 6b + 6c with a sonnet writer plus haiku assembler and includes the Light mode disclaimer. `AUDIT_REPORT.md` is the single combined report for the audit pipeline.
+Merges header, TOC, and tier sections (now deduplicated by Step 6b.5) into `AUDIT_REPORT.md`. Light mode replaces 6a + 6b + 6c with a sonnet writer plus haiku assembler and the mandatory 6b.5 opus sweep between them, and includes the Light mode disclaimer. `AUDIT_REPORT.md` is the single combined report for the audit pipeline.
 Files: `rules/phase6-report-prompts.md`, `rules/report-template.md`.
 
 ### Phase 4a.NX, detailed

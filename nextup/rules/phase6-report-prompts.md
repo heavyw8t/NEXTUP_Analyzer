@@ -1,20 +1,27 @@
 # Phase 6: Report Generation Prompt Templates
 
-> **Usage**: Orchestrator reads this file and spawns the report pipeline: Index → 3 Tier Writers → Assembler.
-> Replace placeholders `{SCRATCHPAD}`, `{PROJECT_ROOT}`, `{PASTE_VERDICTS}`, etc. with actual values.
+> **Usage**: Orchestrator reads this file and spawns the report pipeline: Index → 3 Tier Writers → Final Dedup Sweep → Assembler.
+> Replace placeholders `{SCRATCHPAD}`, `{PROJECT_ROOT}`, `{PASTE_VERDICTS}`, `{REPORT_PRIMER}`, `{REPORT_OUTPUT}`, etc. with actual values.
 
-> **Architecture**: Index Agent → 3 Parallel Tier Writers → Assembler Agent
-> **Why**: A single report agent gets overwhelmed on 30+ hypotheses, producing catch-all tables and invisible findings. Splitting by severity tier ensures every finding gets a proper write-up.
+> **Architecture**: Index Agent → 3 Parallel Tier Writers → Final Dedup Sweep → Assembler Agent
+> **Why**: A single report agent gets overwhelmed on 30+ hypotheses, producing catch-all tables and invisible findings. Splitting by severity tier ensures every finding gets a proper write-up. The Final Dedup Sweep catches duplicates introduced by chain analysis, verification observation extraction, and Low-escalation paths that bypass Phase 4a inventory dedup.
+
+> **PRIMER + OUTPUT FOLDER (mandatory, set by wizard Step 0c.7)**:
+>
+> - `REPORT_PRIMER` selects the report format. Valid values: `default` (single monolithic `AUDIT_REPORT.md`), `sherlock` (one file per finding: `C-01.md`, `H-01.md`, `M-01.md`, `L-01.md`, `I-01.md`, plus `SUMMARY.md` index). Additional primers live at `{NEXTUP_HOME}/primers/{name}.md`.
+> - `REPORT_OUTPUT` is the destination. For `default`, this is a full file path ending in `AUDIT_REPORT.md`. For `sherlock` and other per-finding primers, this is a directory path that will contain the per-finding files plus `SUMMARY.md`.
+> - EVERY agent below MUST read `{NEXTUP_HOME}/primers/{REPORT_PRIMER}.md` (or handle the `default` case inline for monolithic) BEFORE writing output, and emit the correct filename convention. The tier writers produce one file per finding when the primer is per-finding; they append to a single scratchpad file when the primer is monolithic; the assembler merges scratchpad files into the final deliverable.
+> - If `REPORT_PRIMER` is unset, treat it as `default` and warn the orchestrator that the wizard did not collect the primer (this is the pre-fix fallback behavior, preserved for backward compatibility). If `REPORT_OUTPUT` is unset, default to `{PROJECT_ROOT}/AUDIT_REPORT.md` (monolithic) or `{PROJECT_ROOT}/audit/` (per-finding).
 
 ---
 
 ## Step 6a: Index Agent
 
-> **Model**: haiku (mechanical task - fast, cheap)
+> **Model**: sonnet (mechanical task, but haiku truncated on prior runs; sonnet is the minimum-safe floor for consolidation and ID assignment)
 > **Purpose**: Creates master index mapping internal hypothesis IDs to clean report IDs. Assigns each hypothesis to exactly one tier.
 
 ```
-Task(subagent_type="general-purpose", model="haiku", prompt="
+Task(subagent_type="general-purpose", model="sonnet", prompt="
 You are the Report Index Agent. You create the master finding index for the audit report.
 
 ## Your Inputs
@@ -372,13 +379,122 @@ Return: 'DONE: {L} Low + {I} Informational findings written'
 
 ---
 
+## Step 6b.5: Final Dedup Sweep (one opus agent, unconditional, all modes)
+
+> **Model**: opus. **Trigger**: Always, regardless of audit mode. This is a carve-out from the Light-mode all-sonnet rule.
+> **Purpose**: Catch duplicate findings that escaped Phase 4a inventory dedup. Duplicates typically get re-introduced by Phase 4c chain analysis, Phase 5.5 `[VER-NEW-*]` observation extraction, Phase 5.6 individual escalation, and Phase 5.7 compound escalation.
+> **Position**: Runs AFTER the three tier writers return (or after the Light-mode single writer returns). Runs BEFORE the assembler.
+
+```
+Task(subagent_type="general-purpose", model="opus", prompt="
+You are the Final Dedup Sweep Agent. You remove duplicate findings from the report tier files before the assembler runs.
+
+## Your Inputs
+
+Read:
+- {SCRATCHPAD}/report_index.md (master finding index with final severities and evidence tags)
+- {SCRATCHPAD}/report_critical_high.md (Critical + High tier output)
+- {SCRATCHPAD}/report_medium.md (Medium tier output)
+- {SCRATCHPAD}/report_low_info.md (Low + Informational tier output)
+- {SCRATCHPAD}/findings_inventory.md (root-cause context from Phase 4a)
+- {SCRATCHPAD}/chain_hypotheses.md (chain findings, common source of duplicates)
+
+Light-mode input fallback: if the three tier files do not exist, read {SCRATCHPAD}/report_writer_output.md instead (single-writer output). Apply the same dedup logic; rewrite the single file at the end.
+
+## Your Task
+
+### STEP 1: Enumerate all findings
+
+Walk every finding in every tier file (or the single writer file in Light mode). For each finding, capture:
+- Report ID (e.g. H-01, M-03, L-07)
+- Original severity
+- Root-cause one-liner (the actual bug mechanism, not the surface symptom)
+- Attack path (summary)
+- Locations (file:line refs)
+- Evidence tag from report_index.md
+
+### STEP 2: Identify duplicates
+
+Two findings are duplicates when they describe the same underlying bug. Apply ALL of these checks; a duplicate must satisfy ALL to avoid over-merging:
+
+1. Same root cause: the single sentence that explains WHY the bug exists matches (e.g. 'admin setter has no upper bound' vs 'setter allows unbounded value' is a match; 'admin setter has no upper bound' vs 'initialization missing access control' is not).
+2. Same exploit mechanism: the concrete way an attacker triggers the bug is the same class (e.g. both require 'attacker calls setFee with a large value', even if one describes a particular victim and the other describes a class of victims).
+3. Location overlap: at least one location (file:line anchor, or same function, or same state variable) appears in both findings. If the locations are completely disjoint the findings are likely NOT duplicates even if the mechanism rhymes.
+
+Findings that share a symptom but have different root causes are NOT duplicates. Findings that share a root cause but hit different contracts for different reasons are NOT duplicates. When in doubt, do NOT merge.
+
+### STEP 3: For each duplicate group, pick the survivor
+
+Priority order (first rule that discriminates wins):
+
+1. HIGHEST severity wins. Critical beats High beats Medium beats Low beats Informational. Severity is final severity from report_index.md (after verification, chain, and escalation adjustments).
+2. On severity tie, STRONGEST evidence tag wins: `[POC-PASS]` > `[MEDUSA-PASS]` > `[PROD-FORK]` / `[PROD-ONCHAIN]` > `[POC-FAIL]` > `[CODE-TRACE]` > `[CONTESTED]`.
+3. On evidence tie, MOST locations wins (a finding that enumerates more affected locations has more value for the reader).
+4. On location tie, LOWEST report ID wins (e.g. H-01 beats H-02). Deterministic tiebreaker.
+
+MERGE evidence from losers into the survivor before dropping them:
+- Add loser's locations to the survivor's location list (deduplicated).
+- If the loser cites attack steps the survivor does not, append them to the survivor's attack path under a 'Additional attack variants:' subheading.
+- If the loser's evidence tag is stronger than the survivor's (rare, only happens when severity is higher on the survivor but evidence is stronger on the loser), upgrade the survivor's evidence tag to the loser's and note 'Evidence strengthened by merge of {loser_id}'.
+
+### STEP 4: Rewrite tier files
+
+For each tier file (or the Light single-writer file), write out a new version that:
+- Keeps all survivors in place with merged evidence.
+- Removes all losers entirely (including their full section, not just an ID reference).
+
+Write to the SAME paths you read from:
+- {SCRATCHPAD}/report_critical_high.md
+- {SCRATCHPAD}/report_medium.md
+- {SCRATCHPAD}/report_low_info.md
+(or in Light mode, {SCRATCHPAD}/report_writer_output.md).
+
+### STEP 5: Write dedup log
+
+Write to {SCRATCHPAD}/final_dedup.md:
+
+```markdown
+# Phase 6b.5: Final Dedup Sweep Log
+
+## Summary
+- Findings before sweep: {N}
+- Duplicate groups identified: {G}
+- Findings dropped: {D}
+- Findings after sweep: {N - D}
+
+## Drop Log
+
+| Group | Kept (ID, Severity, Evidence) | Dropped (ID, Severity, Evidence) | Reason | Locations merged? |
+|-------|-------------------------------|----------------------------------|--------|-------------------|
+| 1 | H-01 (High, [POC-PASS]) | M-04 (Medium, [CODE-TRACE]) | same root cause: unbounded admin setter; survivor has higher severity and stronger evidence | yes, M-04's 2 locations appended |
+| ... | ... | ... | ... | ... |
+
+## Not Deduplicated (for reviewer audit)
+
+List any findings that LOOKED like duplicates on first read but failed the three-part test in STEP 2. One line each with the reason they are distinct.
+```
+
+The dedup log is the audit trail. The assembler reads the rewritten tier files, not this log, but the log lets a human reviewer sanity-check the merges.
+
+## Output
+
+Three files rewritten in place (tier files or Light single-writer file) plus {SCRATCHPAD}/final_dedup.md.
+
+Return: 'DONE: {G} duplicate groups resolved, {D} findings dropped, {N - D} survive'
+
+SCOPE: Write ONLY to the paths listed above. Do NOT read or modify the assembler's output, findings_inventory.md, hypotheses.md, or any pre-dedup scratchpad file. Return and stop.
+")
+```
+
+---
+
 ## Step 6c: Assembler Agent
 
-> **Model**: haiku for ≤25 findings, sonnet for >25 findings (haiku truncated on large reports in prior audits)
+> **Model**: sonnet (always). Haiku has truncated on large reports in prior audits and on stall-prone runs; sonnet is the minimum-safe floor.
 > **Purpose**: Merges the three tier sections into the final AUDIT_REPORT.md with header, summary, remediation order, and optional appendix.
 
 ```
-Task(subagent_type="general-purpose", model="{haiku_or_sonnet}", prompt="
+Task(subagent_type="general-purpose", model="sonnet", prompt="
 You are the Report Assembler. You merge the tier sections into the final audit report.
 
 ## Your Inputs
@@ -419,11 +535,15 @@ If any quality check fails, fix the issue in the assembled output. Document what
 
 ### STEP 3: Write Final Report
 
-Write the assembled report to: {PROJECT_ROOT}/AUDIT_REPORT.md
+Write the assembled report to: `{REPORT_OUTPUT}` (path provided by the wizard; see the PRIMER + OUTPUT FOLDER block at the top of this file).
+
+If `REPORT_PRIMER == sherlock` (or any per-finding primer): `REPORT_OUTPUT` is a directory. Do NOT emit a single monolithic file; instead, write each finding as its own file per the primer's naming convention (`C-NN.md`, `H-NN.md`, `M-NN.md`, `L-NN.md`, `I-NN.md`, plus `SUMMARY.md`). Read `{NEXTUP_HOME}/primers/{REPORT_PRIMER}.md` for the exact prose style and file structure. Create the output directory if it does not exist.
+
+If `REPORT_PRIMER == default` (or unset): `REPORT_OUTPUT` is a full file path. Write the assembled monolithic report there.
 
 ## Output
 
-Write to {PROJECT_ROOT}/AUDIT_REPORT.md
+Write to `{REPORT_OUTPUT}` per the rule above.
 
 Also write quality check results to {SCRATCHPAD}/report_quality.md:
 ```markdown
@@ -440,4 +560,4 @@ Return: 'DONE: Report assembled - {N} Critical, {N} High, {N} Medium, {N} Low, {
 ")
 ```
 
-> **Assembler Model Selection**: If total finding count from report_index.md > 25, use `model="sonnet"` instead of `model="haiku"`. Haiku truncates on large reports (learned from prior audits: 2,669-line report was truncated).
+> **Assembler Model Selection**: Always use `model="sonnet"`. Previous guidance conditionally escalated from haiku to sonnet at 25 findings; that escalation is now unconditional because haiku truncated on mid-sized reports and a single-agent fallback stalled at 600s on a 48-finding run. The 5-agent Phase 6 pipeline (index sonnet → 3 tier writers opus/sonnet → assembler sonnet) replaces any single-agent report writer. Never substitute a single opus writer for the 5-agent pipeline, even under orchestrator time pressure; single-writer mode is the stall pattern this rule exists to prevent.

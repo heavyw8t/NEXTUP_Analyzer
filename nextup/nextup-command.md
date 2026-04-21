@@ -1154,9 +1154,19 @@ After ALL verifiers complete:
 
 ### Phase 6: Report Generation
 
-> **Light mode override**: Do NOT read `{NEXTUP_HOME}/rules/phase6-report-prompts.md`. Instead, spawn 2 agents: (1) a single sonnet writer handling ID assignment, root-cause consolidation, and all severity tiers inline; (2) a haiku assembler that merges the writer output with the report header template. No separate index agent or tier-split writers. Include the Light mode disclaimer per override #9.
+> **Light mode override**: Do NOT read `{NEXTUP_HOME}/rules/phase6-report-prompts.md` for the writer pipeline. Instead, spawn 2 agents: (1) a single sonnet writer handling ID assignment, root-cause consolidation, and all severity tiers inline; (2) a haiku assembler that merges the writer output with the report header template. No separate index agent or tier-split writers. Between these two agents, the orchestrator MUST run Step 6b.5 (Final Dedup Sweep) per the section below. Include the Light mode disclaimer per override #9.
 
-> **Core/Thorough**: Read `{NEXTUP_HOME}/rules/phase6-report-prompts.md` and follow the full 5-agent pipeline (Index → 3 Tier Writers → Assembler).
+> **Core/Thorough**: Read `{NEXTUP_HOME}/rules/phase6-report-prompts.md` and follow the full 6-agent pipeline (Index → 3 Tier Writers → Final Dedup Sweep → Assembler).
+
+### Phase 6b.5: Final Dedup Sweep (unconditional, all modes)
+
+> **Model**: opus. **Trigger**: Always, regardless of mode. This is a one-agent carve-out from the Light-mode all-sonnet rule, mirroring the Design Stress Testing slot in Phase 4b.
+> **Purpose**: Catch duplicate findings that escaped Phase 4a inventory dedup. Duplicates typically get re-introduced by Phase 4c chain analysis (chain finding overlaps with component finding), Phase 5.5 `[VER-NEW-*]` observation extraction, Phase 5.6 individual escalation (upgraded Low re-describes a Medium), or Phase 5.7 compound escalation (pair / triple overlaps with an individual finding).
+> **Position**: AFTER tier writers (or Light-mode single writer) return. BEFORE the assembler runs.
+> **Dedup rule**: Two findings are duplicates when they describe the same underlying bug (same root cause AND same exploit mechanism), even if finding IDs, severity, wording, or locations differ. For each duplicate group, keep the finding with the HIGHEST severity. Ties broken by stronger evidence tag: `[POC-PASS]` > `[MEDUSA-PASS]` > `[PROD-FORK]` / `[PROD-ONCHAIN]` > `[POC-FAIL]` > `[CODE-TRACE]` > `[CONTESTED]`.
+> **Output**: rewrites the tier output files (or Light writer output) in place with dropped duplicates removed, and writes `{SCRATCHPAD}/final_dedup.md` with the drop log.
+
+Read the full agent prompt from `{NEXTUP_HOME}/rules/phase6-report-prompts.md` Step 6b.5 and spawn one opus agent. Await completion before spawning the assembler. If the dedup sweep fails (timeout or error), log to `{SCRATCHPAD}/violations.md` and proceed to the assembler on the un-deduplicated tier files; do not block the pipeline.
 
 ### Phase 6d: Trace Reconstruction (only if TRACE_MODE == true)
 
