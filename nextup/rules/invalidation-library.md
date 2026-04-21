@@ -92,6 +92,12 @@ The attack exploits an uninitialized or zero state, but the contract's construct
 **US-4: Sequence of operations required is blocked by intermediate checks**
 The attack describes a multi-step sequence, but an intermediate step has a check that fails given the state produced by the previous step. The full sequence cannot complete.
 
+**US-5: Attack assumes state persists across a revert (violated by EVM atomicity)**
+The finding's attack path claims a side effect (nonce increment, storage write, mapping update, event emission) from a transaction that ultimately reverts. EVM transaction atomicity rolls back ALL state changes when the top-level call reverts; no side effect survives a revert. Examples of this false-positive class: "attacker calls function X with invalid signature; nonce is pre-incremented before ECDSA.recover; the invalid signature reverts but the nonce was already burned," or "a setter writes storage before the validation check reverts; the storage write sticks." Neither holds on EVM. Check: does the claimed side effect occur in the SAME transaction as the revert? If yes, the attack is not viable. Only side effects that occur in a PRIOR successful transaction (or that are emitted from a successful inner call whose outer call reverts, in which case the inner writes are also rolled back because they share a transaction) can persist.
+
+**US-6: Signature attack assumes off-chain intent persists after signer revokes**
+The finding claims that a signature with a far-future deadline is dangerous because the signer may "want to revoke" later. On-chain, replay protection is provided by the contract's nonce: a signed message with nonce N is consumed once and then nonce becomes N+1. Off-chain intent revocation is not an on-chain concept. If the finding does not show how an attacker can produce a second valid signature for the same nonce, or how the nonce can be rolled back, the attack is not viable. Related: "deadline has no upper bound" becomes Low (signatures should have sensible bounds for good UX) but is not a protocol security issue in itself unless the signer's private key is independently compromised.
+
 ---
 
 ## SELF_HARM_ONLY
@@ -197,3 +203,6 @@ The vulnerable function is internal/private and is never called from any public/
 
 **OS-4: Finding applies to a deprecated or decommissioned component**
 The affected contract or function has been deprecated, is being phased out, or is not part of the active protocol. No user funds flow through this code path.
+
+**OS-5: External stablecoin admin action (USDC / USDT / DAI blacklist or pause)**
+The finding relies on Circle, Tether, or MakerDAO exercising admin action on the stablecoin contract itself (blacklist of a specific address, contract-wide pause, or upgrade). This is an industry-accepted external admin risk that affects every integrating protocol equally. It is not a protocol bug; it is a known upstream risk disclosed in the stablecoin's own documentation. Major audit platforms (Sherlock, Code4rena) explicitly list "admin action on external tokens outside protocol control" as out-of-scope unless the protocol introduces a novel amplifying mechanism beyond standard token integration. Reject findings of the form "if USDC blacklists X then Y breaks", including blacklist of the protocol's own contracts, user wallets, or treasury addresses. Severity-adjust only if the protocol's design specifically amplifies the damage beyond what every other USDC-integrating protocol experiences (for example, a unique unrecoverable code path that has no analogue in comparable protocols).
