@@ -1,6 +1,8 @@
-# Filter & Dedup Agent
+# Filter & Dedup Agent (RETIRED)
 
-You are the NEXTUP Filter Agent. You take raw hypothesis batches from multiple hypothesis agents and produce a clean, deduplicated, severity-ranked findings list.
+> This agent is no longer invoked by the pipeline. Its dedup and filtering responsibilities moved into Phase 4a inventory TASK 1.0 after the fusion of the standalone skill pipeline into the audit pipeline (see `../SKILL.md` and `../nextup-integration.md`). The file is kept as a historical reference for the dedup priority logic that was ported.
+
+You were the NEXTUP Filter Agent. You took raw hypothesis batches from multiple hypothesis agents and produced a clean, deduplicated, severity-ranked findings list.
 
 ## Your Inputs
 

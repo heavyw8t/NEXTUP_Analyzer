@@ -1,11 +1,8 @@
 # NEXTUP Pipeline Reference
 
-Single-source overview of the two pipelines in this repo:
+Single-source overview of the NEXTUP audit pipeline (`/nextup` with `light | core | thorough`). The combinatorial puzzle-piece analysis that used to run as a standalone skill is now Phase 4a.NX of this pipeline; its extract, combine, and hypothesize steps run serially between Phase 3 breadth and Phase 4a inventory, and its hypotheses flow into inventory dedup as a third finding source alongside breadth and static analysis.
 
-1. NEXTUP Audit Pipeline (the full web3 auditor, `/nextup` with `light | core | thorough`)
-2. NEXTUP Skill Pipeline (the standalone combinatorial puzzle-piece auditor, `/nextup` on the skill itself, `lightweight | middleweight | heavyw8t`)
-
-The first pipeline calls the second as a seeder between Phase 4a and Phase 4b.
+The `lightweight | middleweight | heavyw8t` flag now controls Phase 4a.NX depth only (k=2 / k=3 / k=4 combo size plus hypothesis-agent budget). There is no separate standalone entry.
 
 ---
 
@@ -43,9 +40,9 @@ One line per step. Expanded section below.
 - Step 3c: Per-contract analysis (Thorough only).
 
 ### Phase 4: Synthesis, Depth, Chains
-- Step 4a: Inventory agent merges all breadth findings plus side-effect trace.
+- Step 4a.NX: NEXTUP combinatorial analysis runs BEFORE inventory. Extract puzzle pieces (1 sonnet), combine + eliminate (Python, zero tokens), hypothesize (Core: 5-8 sonnet, Thorough: 8-15 sonnet; skipped in Light), write `investigation_targets.md` (Part 2).
+- Step 4a: Inventory agent merges breadth findings, NEXTUP hypotheses, and static-analysis promotions. Dedups by root cause (see `prompts/{LANGUAGE}/phase4a-inventory-prompt.md` TASK 1.0). Emits the side-effect trace.
 - Step 4a.5: Semantic invariant pre-computation (Pass 1 Core + Thorough, Pass 2 Thorough).
-- Step 4a.NX: NEXTUP seeder emits `investigation_targets.md` (see Part 2).
 - Step 4b iter 1: Spawn 4 depth agents + 3 scanners + validation sweep + niche agents.
 - Step 4b.4: Injectable example-precedent scout (Core, Thorough). One haiku per injectable finding, writes `precedent_{id}.md`, post-processed into findings_inventory.md as new candidates or Related locations footers. Feeds the Axis 4 RAG Match precedent bonus.
 - Step 4b scoring: Haiku scoring agent writes `confidence_scores.md` (2-axis Core, 4-axis Thorough). Reads precedent output for Axis 4 bonus.
@@ -76,44 +73,29 @@ One line per step. Expanded section below.
 
 ---
 
-## PART 2: NEXTUP SKILL PIPELINE (OVERVIEW)
+## PART 2: PHASE 4a.NX COMBINATORIAL ANALYSIS (OVERVIEW)
 
-Runs standalone as `/nextup [lightweight|middleweight|heavyw8t] [path]`, or as a seeder between Phase 4a and Phase 4b of the audit pipeline. Seeder mode stops after Phase 2b.
+Phase 4a.NX is the absorbed former skill pipeline. It runs inside the audit pipeline between Phase 3 (breadth) and Phase 4a (inventory). Its hypotheses flow into inventory as a third finding source, dedup by root cause, and enter the standard flow as `[NX-N]` findings.
 
-### Phase 0: Setup
-- Step 0a: Parse args (`nextup-seeder`, mode, scope path).
-- Step 0a.1: Interactive mode picker if mode not supplied (Standalone only).
-- Step 0a.2: Mode configuration table (k, Top-N, agent count).
-- Step 0b: Detect language from file extensions and framework markers.
-- Step 0c: Create scratchpad directory.
-- Step 0c.1: Ask user for `REPORT_DIR` outside the audited repo (Standalone only, R1).
-- Step 0c.2: Ask user for primer choice: Sherlock, Custom, None (Standalone only, R2).
-- Step 0d: Print banner.
+### Step NX-1: EXTRACT
+One sonnet agent reads `extraction/extract_agent.md` plus the language's taxonomy (`taxonomy/{LANGUAGE}.json`), pattern hints (`extraction/patterns/{hints_file}`), recon artifacts, and source files. Writes `{SCRATCHPAD}/nextup/pieces.json`.
 
-### Phase 1: EXTRACT
-- Step 1: Single opus (Standalone) or sonnet (Seeder) agent writes `pieces.json` from taxonomy + pattern hints + source code.
+### Step NX-2: COMBINE + ELIMINATE
+Python combinator, zero LLM tokens. Runs `combinator/combine_{LANGUAGE}.py` with `pieces.json`, `k`, `--top {TOP_N}`. Writes `combos_ranked.json`. Per-language rules and weights in `combinator/rules/{LANGUAGE}.json` and `combinator/weights/{LANGUAGE}.json`. Shared BFS + scoring in `combinator/shared.py`.
 
-### Phase 2: COMBINE + ELIMINATE
-- Step 2: Python combinator generates combinations of size `k`, eliminates impossible ones statically, writes `combos_ranked.json`.
-- Step 2b: Seeder-only — generate `investigation_targets.md` and stop.
+### Step NX-3: HYPOTHESIZE
+Skipped in Light mode. In Core (5-8 sonnet) and Thorough (8-15 sonnet), the orchestrator splits `combos_ranked.json` into batches of 10 to 15 and spawns hypothesis agents in a single parallel message. Each agent reads `hypothesis/hypothesis_agent.md`, its combo batch, and the referenced source. Priority guard: combinations that re-confirm existing breadth findings without stricter evidence are marked `INFEASIBLE-BREADTH-DUP`. Writes `hypotheses_batch_N.json`.
 
-### Phase 3: HYPOTHESIZE (Standalone only)
-- Step 3a: Read `combos_ranked.json` and split into batches of 10 to 15.
-- Step 3b: Determine agent count from mode cap.
-- Step 3c: Write per-batch combo files.
-- Step 3d: Spawn all hypothesis agents in parallel, each writes `hypotheses_batch_N.json`.
+### Step NX-4: Investigation targets
+Orchestrator-inline. Applies the routing table (Pass 1 category match, Pass 2 empty-bucket rebalance, Pass 3 imbalance redistribution) to assign each surviving combo to one of four depth domains. Writes `investigation_targets.md`.
 
-### Phase 4: FILTER + DEDUP (Standalone only)
-- Step 4: One opus agent merges all hypothesis batches, deduplicates, confirms against source code, writes one `NX-NN.md` per CONFIRMED finding plus `SUMMARY.md`.
+### Step NX-5: Inject into depth
+When Phase 4b spawns depth agents, each receives the relevant section of `investigation_targets.md` appended to its prompt. Empty sections skip injection.
 
-### Phase 4b: REWRITE WITH PRIMER (Standalone only, skipped if primer is None)
-- Step 4b.1: Enumerate short reports in `REPORT_DIR`.
-- Step 4b.2: Create `REWRITE_DIR = REPORT_DIR/rewritten`.
-- Step 4b.3: One rewrite agent per short report, capped at 10 concurrent, reads primer and writes the final submission form.
-- Step 4b.4: Write `REWRITE_DIR/SUMMARY.md` index.
-
-### Phase 5: REPORT (Standalone only)
-- Step 5: Orchestrator inline prints summary counts, severity distribution, and per-finding file paths.
+### Downstream
+- Phase 4a inventory reads `hypotheses_batch_*.json` alongside `analysis_*.md` and static-analysis promotions, dedups across sources per `prompts/{LANGUAGE}/phase4a-inventory-prompt.md` TASK 1.0, and writes `findings_inventory.md` with survivors indexed by `[XX-N]` (breadth), `[SLITHER-N]` / `[SD-N]` / `[SAN-N]` (static), or `[NX-N]` (NEXTUP) plus a `## Dedup Trail` appendix.
+- Phase 4b depth agents receive investigation targets per NX-5.
+- Phase 4c chain analysis, Phase 5 verification (PoC execution), Phase 5.6/5.7 escalation, and Phase 6 report treat NEXTUP-origin findings identically to breadth findings.
 
 ---
 
@@ -247,18 +229,27 @@ Files: `rules/phase3b-rescan-prompt.md` (same prompt, later section).
 
 ### Audit Pipeline, Phase 4
 
-#### Step 4a: Inventory + side-effect trace
-One sonnet agent reads all `analysis_*.md` files, deduplicates, assigns IDs, and writes `findings_inventory.md` plus a side-effect trace. Also writes `phase4_gates.md`. Gate 1 BLOCKED means missing breadth agents: must re-spawn before Step 4b.
+#### Step 4a.NX: NEXTUP combinatorial analysis
+Always runs, BEFORE inventory. Five sub-steps (see Part 2 for the compact overview and `SKILL.md` for the full reference):
+
+- NX-1: one sonnet extraction agent reads `extraction/extract_agent.md` + taxonomy + pattern hints + recon artifacts and writes `pieces.json`.
+- NX-2: Python combinator (`combinator/combine_{LANGUAGE}.py`, zero tokens) consumes `pieces.json`, emits `combos_ranked.json` with the top-N combinations of size `k`.
+- NX-3 (Core: 5-8 sonnet, Thorough: 8-15 sonnet, SKIP in Light): parallel hypothesis agents read `hypothesis/hypothesis_agent.md`, their combo batch, and source. Priority guard marks combos that duplicate breadth findings as `INFEASIBLE-BREADTH-DUP`. Output: `hypotheses_batch_N.json`.
+- NX-4: orchestrator-inline routing writes `investigation_targets.md`. Routing table is deterministic top-down (priority: contains D → depth-external; contains A07 → depth-edge-case; 2+ of {A,E,G} → depth-token-flow; 2+ of {C,F,H} → depth-state-trace; A+I or E+I → depth-edge-case; fallback → depth-state-trace). Pass 2 rebalances empty buckets; Pass 3 redistributes if max/min > 3.
+- NX-5: when Phase 4b spawns depth agents, each receives the relevant section of `investigation_targets.md` appended to its prompt.
+
+Failure never blocks the pipeline; extraction or combinator failure skips the rest and inventory runs on breadth + static only.
+
+Files: `SKILL.md`, `extraction/extract_agent.md`, `hypothesis/hypothesis_agent.md`, `extraction/patterns/*.md`, `taxonomy/{LANGUAGE}.json`, `combinator/combine_{LANGUAGE}.py`, `combinator/rules/{LANGUAGE}.json`, `combinator/weights/{LANGUAGE}.json`, `combinator/shared.py`, `{SCRATCHPAD}/nextup/pieces.json`, `{SCRATCHPAD}/nextup/combos_ranked.json`, `{SCRATCHPAD}/nextup/hypotheses_batch_*.json`, `{SCRATCHPAD}/nextup/investigation_targets.md`.
+Tools: `Agent`, `Bash` (Python combinator), `Read`, `Write`.
+
+#### Step 4a: Inventory + side-effect trace + cross-source dedup
+One sonnet agent reads all `analysis_*.md` files (breadth), `{SCRATCHPAD}/nextup/hypotheses_batch_*.json` (NEXTUP), and static-analysis promotions. Dedups across sources per TASK 1.0 priority: (1) breadth+PoC wins outright, (2) breadth-no-PoC loses only to a NEXTUP hypothesis with stricter source evidence, (3) NEXTUP-vs-NEXTUP goes by feasibility then severity then combo score, (4) static-detector survives only when alone. Losers are merged as `Related locations:` and `Puzzle-piece evidence:` footers on survivors; dropped items go into a `## Dedup Trail` appendix. Assigns IDs: breadth keeps `[XX-N]`, static uses `[SLITHER-N]` / `[SD-N]` / `[SAN-N]`, NEXTUP survivors without breadth match get `[NX-N]`. Writes `findings_inventory.md`, the side-effect trace, and `phase4_gates.md`. Gate 1 BLOCKED means missing breadth agents: must re-spawn before Step 4b.
 Files: `prompts/{LANGUAGE}/phase4a-inventory-prompt.md`, `findings_inventory.md`, `phase4_gates.md`.
 
 #### Step 4a.5: Semantic invariants (Pass 1 and Pass 2)
-Pass 1 (Core, Thorough) enumerates write sites, defines semantic invariants, groups variables into clusters, flags conditional writes, mirror pairs, and time-weighted accumulation exposure. Pass 2 (Thorough only) reverses direction: for each function, which clusters does it write partially; then recursive stale-read consequence trace up to 3 levels. Output feeds depth agents so they do not re-derive invariants.
+Pass 1 (Core, Thorough) enumerates write sites, defines semantic invariants, groups variables into clusters, flags conditional writes, mirror pairs, and time-weighted accumulation exposure. Pass 2 (Thorough only) reverses direction: for each function, which clusters does it write partially; then recursive stale-read consequence trace up to 3 levels. Output feeds depth agents so they do not re-derive invariants. Runs after Phase 4a inventory.
 Files: `state_variables.md`, `function_list.md`, `semantic_invariants.md`.
-
-#### Step 4a.NX: NEXTUP seeder
-Always runs. Invokes the NEXTUP skill in seeder mode (see Part 2). Extracts puzzle pieces, combines them statically, eliminates impossible combos, then writes `investigation_targets.md` with per-depth-domain investigation questions. Routing from `combo.categories` to depth domain is a deterministic top-down table (priority: contains D → depth-external; contains A07 → depth-edge-case; 2+ of {A,E,G} → depth-token-flow; 2+ of {C,F,H} → depth-state-trace; A+I or E+I → depth-edge-case; fallback → depth-state-trace). No per-piece scoring required. Injected into each depth agent prompt at Step 4b.
-Files: `SKILL.md` (the skill entry point), `extraction/extract_agent.md`, `extraction/patterns/*.md`, `taxonomy/{LANGUAGE}.json`, `combinator/combine_{LANGUAGE}.py`, `combinator/rules/{LANGUAGE}.json`, `combinator/weights/{LANGUAGE}.json`, `combinator/shared.py`, `{SCRATCHPAD}/nextup/pieces.json`, `{SCRATCHPAD}/nextup/combos_ranked.json`, `{SCRATCHPAD}/nextup/investigation_targets.md`.
-Tools: `Agent`, `Bash` (Python combinator), `Read`, `Write`.
 
 #### Step 4b iter 1: Depth, scanners, niche
 Spawns 4 depth agents (token-flow, state-trace, edge-case, external) with NEXTUP investigation targets injected per domain, plus 3 Blind Spot Scanners (A, B, C), 1 Validation Sweep Agent, and required niche agents from `template_recommendations.md`. Timeout split-and-retry: a timed-out agent splits into 2 lite agents (max 3 findings, no static analyzer, max 5 files). In Light mode this collapses to 4 merged sonnet agents and iteration 1 only.
@@ -358,43 +349,14 @@ One agent assigns final finding IDs (`F-01`, `F-02`, ...), orders by severity, a
 3 agents, one per severity tier (CRIT / HIGH, MEDIUM, LOW / INFO). Each writes the tier section using `rules/report-template.md`.
 
 #### Step 6c: Assembler
-Merges header, TOC, and tier sections into `AUDIT_REPORT.md`. Light mode replaces 6a + 6b + 6c with a sonnet writer plus haiku assembler and includes the Light mode disclaimer. R3 forbids a single combined report in Skill mode, but the audit pipeline's `AUDIT_REPORT.md` is intentional.
+Merges header, TOC, and tier sections into `AUDIT_REPORT.md`. Light mode replaces 6a + 6b + 6c with a sonnet writer plus haiku assembler and includes the Light mode disclaimer. `AUDIT_REPORT.md` is the single combined report for the audit pipeline.
 Files: `rules/phase6-report-prompts.md`, `rules/report-template.md`.
 
-### Skill Pipeline, detailed
+### Phase 4a.NX, detailed
 
-#### Phase 0 (Skill)
-Parses args, picks mode interactively if missing, detects language, creates `.nextup_scratchpad`, asks for `REPORT_DIR` outside the audited repo (R1), asks for primer choice (R2). Primer is injected by file path into the Phase 4b rewrite agent; the orchestrator never reads it.
-Files: `SKILL.md`, `primers/sherlock.md` (or a custom primer path), `nextup-command.md`.
-Tools: `AskUserQuestion`, `Bash` (mkdir), `Read`.
+Phase 4a.NX is the absorbed former skill pipeline. See the Phase 4 section above for the orchestrator-facing step description and `SKILL.md` for the full technical reference (schemas, routing rules, priority guard, failure handling).
 
-#### Phase 1 (Skill): EXTRACT
-One opus agent (sonnet in seeder mode). Reads the taxonomy (`taxonomy/{LANGUAGE}.json`), the pattern hints (`extraction/patterns/{pattern_hints_file}`), and ALL source files. Writes `pieces.json`: a list of typed puzzle pieces with file:line anchors, category (A to I), state_touched, and call_context.
-Files: `extraction/extract_agent.md`, `taxonomy/{LANGUAGE}.json`, `extraction/patterns/*.md`, `{NEXTUP_DIR}/pieces.json`.
-
-#### Phase 2 (Skill): COMBINE + ELIMINATE
-Python combinator, zero LLM tokens. Runs `combinator/combine_{LANGUAGE}.py` with `pieces.json`, `k`, and `--top {TOP_N}`. Shared BFS / scoring scaffolding in `combinator/shared.py`. Per-language rules and weights in `combinator/rules/{LANGUAGE}.json` and `combinator/weights/{LANGUAGE}.json`. Output: `combos_ranked.json`.
-Files: `combinator/combine_{LANGUAGE}.py`, `combinator/shared.py`, `combinator/rules/{LANGUAGE}.json`, `combinator/weights/{LANGUAGE}.json`, `{NEXTUP_DIR}/combos_ranked.json`.
-Tools: `python3` / `python`.
-
-#### Phase 2b (Skill, seeder mode only): Investigation targets
-Reads `combos_ranked.json`, applies the routing table (A+E / A+G / E+G to depth-token-flow; C+F / C+H / F+H to depth-state-trace; A+I / E+I / A07 to depth-edge-case; D + any to depth-external), writes `investigation_targets.md`. Seeder stops here; NEXTUP orchestrator injects the targets into Phase 4b depth agents per Step NX-4.
-Files: `{NEXTUP_DIR}/investigation_targets.md`, `nextup-integration.md`.
-
-#### Phase 3 (Skill): HYPOTHESIZE
-Read `hypothesis/hypothesis_agent.md`. Split `combos_ranked.json` into batches of 10 to 15. Spawn 2-15 sonnet agents in parallel (mode-dependent cap). Each agent reads real source at the referenced locations, then emits a hypothesis per combination or marks INFEASIBLE. Writes `hypotheses_batch_N.json`.
-Files: `hypothesis/hypothesis_agent.md`, `{NEXTUP_DIR}/combo_batch_N.json`, `{NEXTUP_DIR}/hypotheses_batch_N.json`.
-
-#### Phase 4 (Skill): FILTER + DEDUP
-One opus agent. Reads all `hypotheses_batch_*.json`, `pieces.json`, and the referenced source code. Deduplicates, validates end-to-end, writes one short factual `NX-NN.md` per CONFIRMED finding into `REPORT_DIR`, plus `SUMMARY.md`. INFEASIBLE, refuted, or duplicate items go in the `SUMMARY.md` "Refuted / Not Reproduced" appendix (no per-item files). Never writes a combined report (R3).
-Files: `filter/filter_agent.md`, `{REPORT_DIR}/NX-NN.md`, `{REPORT_DIR}/SUMMARY.md`.
-
-#### Phase 4b (Skill): Rewrite with primer
-Skipped if `PRIMER_PATH == null`. Spawn one sonnet rewrite agent per short report (capped at 10 concurrent). Each agent reads the primer, the short report, and source code, then writes the final submission-style report to `REWRITE_DIR/NX-NN.md`. Primer controls format and prose only: it MAY NOT drop or downgrade findings (R4). Findings that do not fit the primer's scope are written as `U-NN.md` with a one-sentence `*Unclassified reason:*` line at the top.
-Files: primer (e.g. `primers/sherlock.md`), `{REPORT_DIR}/NX-NN.md`, `{REWRITE_DIR}/NX-NN.md`, `{REWRITE_DIR}/SUMMARY.md`.
-
-#### Phase 5 (Skill): Report
-Orchestrator inline. Reads `{REPORT_DIR}/SUMMARY.md` and lists per-finding paths. Prints pipeline stats (pieces, combinations, elimination rate, findings), severity distribution, and both `REPORT_DIR` and `REWRITE_DIR` paths. Never pastes full finding bodies.
+The standalone filter agent (`filter/filter_agent.md`) and primer rewrite step (`primers/sherlock.md`) are retired. Their responsibilities moved into Phase 4a inventory TASK 1.0 (dedup) and Phase 6 tier writers (report style), respectively.
 
 ---
 
@@ -418,14 +380,10 @@ Generic fallbacks when the MCP is unavailable or when docs are provided as URLs.
 - `solodit_findings.dedup.csv`: 19,370 MEDIUM + HIGH Solodit findings across 12 language shards. Read-only, no embeddings.
 
 ### Primers
-- `primers/sherlock.md`: Sherlock contest style (H / M, Title / Summary / Root Cause / Impact / Attack Path / Mitigation).
-- Custom primer: absolute path to user-supplied `.md`.
+Retired. Report style is owned by the audit pipeline's Phase 6 tier writers and `rules/report-template.md`. The `primers/sherlock.md` file is retained only for historical reference.
 
-### Scratchpad layout (audit pipeline)
-`{SCRATCHPAD}/` contains: `recon_summary.md`, `template_recommendations.md`, `attack_surface.md`, `state_variables.md`, `function_list.md`, `meta_buffer.md`, `analysis_*.md`, `spawn_manifest.md`, `findings_inventory.md`, `phase4_gates.md`, `semantic_invariants.md`, `confidence_scores.md`, `adaptive_loop_log.md`, `phase4b_manifest.md`, `invariant_fuzz_results.md`, `medusa_fuzz_findings.md`, `chain_hypotheses.md`, `hypotheses.md`, `verify_*.md`, `violations.md`, `checkpoint_postdepth.md`, `AUDIT_REPORT.md`, and the nested `nextup/` subdirectory for the seeder.
-
-### Scratchpad layout (skill standalone)
-`{SCOPE_PATH}/.nextup_scratchpad/` contains: `pieces.json`, `combos_ranked.json`, `combo_batch_*.json`, `hypotheses_batch_*.json`, plus the user-chosen `REPORT_DIR` (outside the audited repo, R1) with `NX-NN.md`, `SUMMARY.md`, and an optional `rewritten/` subdirectory.
+### Scratchpad layout
+`{SCRATCHPAD}/` contains: `recon_summary.md`, `template_recommendations.md`, `attack_surface.md`, `state_variables.md`, `function_list.md`, `meta_buffer.md`, `analysis_*.md`, `spawn_manifest.md`, `findings_inventory.md`, `phase4_gates.md`, `semantic_invariants.md`, `confidence_scores.md`, `adaptive_loop_log.md`, `phase4b_manifest.md`, `invariant_fuzz_results.md`, `medusa_fuzz_findings.md`, `chain_hypotheses.md`, `hypotheses.md`, `verify_*.md`, `violations.md`, `checkpoint_postdepth.md`, `AUDIT_REPORT.md`, and the nested `nextup/` subdirectory with `pieces.json`, `combos_ranked.json`, `combo_batch_*.json`, `hypotheses_batch_*.json`, and `investigation_targets.md` for Phase 4a.NX.
 
 ---
 

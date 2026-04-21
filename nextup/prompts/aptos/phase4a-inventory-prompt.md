@@ -20,6 +20,38 @@ For each file:
 - Extract Step Execution fields -- flag findings with X or ? without valid reasons
 - Extract Rules Applied field -- flag missing rule applications (R1-R17, MR1-MR5, AR1-AR4)
 
+Also read ALL files matching {SCRATCHPAD}/nextup/hypotheses_batch_*.json. These are the NEXTUP combinatorial hypothesis outputs from Phase 4a.NX.
+
+For each hypothesis:
+- Skip entries where `feasibility == "INFEASIBLE"`.
+- Keep FEASIBLE and CONDITIONAL. Each becomes a candidate finding with source="NEXTUP", carrying the fields: title, severity, code_refs (as Location), puzzle_pieces (as evidence), attack_steps, preconditions.
+
+## TASK 1.0: Cross-Source Deduplication (MANDATORY)
+
+Two candidates are duplicates when they describe the same underlying bug, even if:
+- Sources differ (breadth analysis, NEXTUP hypothesis, static detector)
+- Wording differs
+- Severity ratings differ
+- Locations overlap but are not identical (same function, different lines; same resource, different handlers)
+
+For each duplicate group, select the survivor by this priority:
+1. A breadth finding with completed PoC is always the survivor.
+2. A breadth finding without PoC loses only to a NEXTUP hypothesis that cites stricter source evidence (direct code trace through the full attack path, matching puzzle-piece categories that explain the mechanism).
+3. NEXTUP vs NEXTUP: higher feasibility beats lower; ties go to higher severity; remaining ties go to higher combo score.
+4. Static-detector-promoted findings defer to any manual finding (breadth or NEXTUP) covering the same root cause. They survive only when alone.
+
+Merge evidence into the survivor:
+- Append non-duplicate Location entries from losers as `Related locations:` on the survivor.
+- For NEXTUP losers merged into breadth survivors, append `Puzzle-piece evidence: <piece ids>` to cite the static combo that also flagged the issue.
+- If a NEXTUP hypothesis contributes attack steps or preconditions the breadth finding missed, merge them into the survivor's attack path section.
+- Losers are not deleted. List them in a `## Dedup Trail` table at the end of findings_inventory.md (columns: Loser ID, Source, Merged Into, Reason) so chain analysis and the final report can trace origin.
+
+ID assignment after dedup:
+- Breadth survivors keep their original `[XX-N]` IDs.
+- Static-detector survivors use `[SD-N]`.
+- NEXTUP survivors with no breadth match get sequential `[NX-N]` IDs starting at 1.
+- Dropped losers retain their original ID in the Dedup Trail only.
+
 ## TASK 1: Findings Inventory
 
 Write to {SCRATCHPAD}/findings_inventory.md:

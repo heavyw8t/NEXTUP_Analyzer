@@ -19,6 +19,10 @@ description: "NEXTUP - Combinatorial puzzle-piece security auditor. Usage: /next
 - If it contains `notes:` followed by text (up to end of arguments or next known prefix), set `SCOPE_NOTES` to that text. Passed to recon as additional audit context (e.g., "focus on vault module, ignore governance").
 - If it contains `proven-only:` followed by `true` (or just `proven-only: true`), set `PROVEN_ONLY = true`. When enabled, findings whose best evidence is `[CODE-TRACE]` (no executed PoC or fuzzer counterexample) are capped at Low severity in the report. Default: false.
 - If it contains `trace:` followed by `true` or `false` (or just `trace: true`), set `TRACE_MODE` accordingly. When `true`, a single post-hoc trace-reconstructor agent runs after Phase 6 and writes `{PROJECT_ROOT}/AUDIT_TRACE.md`. Default: false. When unset AND no `wrapper-launch`, the wizard asks at Step 0a.3.
+- If it contains `trusted:` followed by a path-looking value (contains `/` OR ends in `.md`/`.txt`/`.json`/`.yaml`), set `TRUSTED_ROLES_PATH`. Otherwise set `TRUSTED_ROLES_TEXT`. Used by Phase 1 Recon 1B to populate the Trust Assumption Table with user-declared FULLY_TRUSTED roles.
+- If it contains `notrusted`, set both `TRUSTED_ROLES_PATH` and `TRUSTED_ROLES_TEXT` to empty and skip Step 0c.4.
+- If it contains `primer:` followed by a primer name (e.g. `primer:sherlock`, `primer:default`), set `REPORT_PRIMER` to that name. The primer file must exist at `{NEXTUP_HOME}/primers/{name}.md` (or be `default` for monolithic).
+- If it contains `report_folder:` followed by a path (absolute or relative to `PROJECT_PATH`), set `REPORT_OUTPUT` to the resolved path. If the primer is monolithic, append `/AUDIT_REPORT.md`.
 - If it contains `wrapper-launch`, set `LAUNCHED_FROM_WRAPPER = true`. The user already confirmed the launch in the terminal wrapper — skip Step 0d (cost estimate + confirmation) entirely and jump directly to Step 1 (language detection). Do NOT show a second confirmation prompt.
 - If MODE, PROJECT_PATH, DOCS_PATH (or nodocs), AND `proven-only:` are all resolved AND `wrapper-launch` is present, skip the ENTIRE wizard — jump directly to Step 1 (language detection). No cost estimate, no confirmation.
 - If MODE, PROJECT_PATH, DOCS_PATH (or nodocs), AND `proven-only:` are all resolved but NO `wrapper-launch`, skip the wizard — jump to "Step 0d: Cost Estimate + Launch Confirmation".
@@ -83,17 +87,17 @@ AskUserQuestion(questions=[{
     {
       label: "Light (Pro plan)",
       description: "Lightweight audit — all Sonnet agents, fits Pro rate limits",
-      preview: "~15-18 agents (all Sonnet/Haiku — no Opus)\n\nPipeline:\n  Recon (2) → Breadth (2-3) → Inventory\n  → NEXTUP Seeder → Depth (4 merged) → Chain (1)\n  → Verify Medium+ → Report ALL (2)\n\nReports all severities. PoC verification targets Medium+.\n\nSkips:\n  · RAG meta-buffer + fork ancestry\n  · Semantic invariants (state consistency\n    bugs harder to detect — use Core for\n    DeFi protocols with complex state)\n  · Niche agents\n  · Confidence scoring + RAG Sweep\n  · Invariant/Medusa fuzz\n\nBest for: Pro plan, codebases < 3000 lines"
+      preview: "~15-18 agents (all Sonnet/Haiku — no Opus)\n\nPipeline:\n  Recon (2) → Breadth (2-3) → NEXTUP (extract+combine,\n  no hypothesize) → Inventory → Depth (4 merged)\n  → Chain (1) → Verify Medium+ → Report ALL (2)\n\nReports all severities. PoC verification targets Medium+.\n\nSkips:\n  · RAG meta-buffer + fork ancestry\n  · NEXTUP hypothesize step (budget)\n  · Semantic invariants\n  · Niche agents\n  · Confidence scoring + RAG Sweep\n  · Invariant/Medusa fuzz\n\nBest for: Pro plan, codebases < 3000 lines"
     },
     {
       label: "Core (Recommended)",
       description: "Standard audit — reports all severities, PoC-verifies Medium+",
-      preview: "~25-45 agents (requires Max plan)\n\nPipeline:\n  Breadth → Inventory → NEXTUP Seeder\n  → Depth (iter 1) → Chains\n  → Verify Medium+ → Report ALL\n\nReports all severities (Low/Info included).\nPoC verification targets Medium+ findings.\n\nSkips:\n  · Breadth re-scan (3b/3c)\n  · Depth iterations 2-3\n  · Design stress testing\n  · Invariant fuzz campaign\n  · Fuzz variants in verification\n\nScoring: 2-axis (Evidence + Analysis Quality)"
+      preview: "~25-45 agents (requires Max plan)\n\nPipeline:\n  Breadth → NEXTUP (extract+combine+hypothesize)\n  → Inventory (dedups) → Depth (iter 1) → Chains\n  → Verify Medium+ → Report ALL\n\nReports all severities (Low/Info included).\nPoC verification targets Medium+ findings.\n\nIncludes:\n  · NEXTUP hypothesize (5-8 sonnet agents)\n\nSkips:\n  · Breadth re-scan (3b/3c)\n  · Depth iterations 2-3\n  · Design stress testing\n  · Invariant fuzz campaign\n  · Fuzz variants in verification\n\nScoring: 2-axis (Evidence + Analysis Quality)"
     },
     {
       label: "Thorough",
       description: "Deep audit — iterative depth, fuzz variants, re-scan",
-      preview: "~35-95 agents (requires Max plan)\n\nPipeline:\n  Breadth → Re-scan (2 iters) → Per-contract\n  → Inventory → NEXTUP Seeder\n  → Depth (1-3 iters, Devil's Advocate)\n  → Chains → Verify ALL severities (with fuzz)\n  → Skeptic-Judge for HIGH/CRIT\n\nIncludes:\n  · NEXTUP combinatorial puzzle-piece analysis\n  · Breadth re-scan + per-contract analysis\n  · Invariant fuzz campaign (EVM)\n  · Medusa stateful fuzzing (EVM, if installed)\n  · Design stress testing\n  · Skeptic-Judge adversarial verification\n  · Fuzz variants in verification\n  · Low/Info findings verified\n\nScoring: 4-axis (Evidence, Consensus, Quality, RAG)"
+      preview: "~35-95 agents (requires Max plan)\n\nPipeline:\n  Breadth → Re-scan (2 iters) → Per-contract\n  → NEXTUP (extract+combine+hypothesize) → Inventory\n  → Depth (1-3 iters, Devil's Advocate)\n  → Chains → Verify ALL severities (with fuzz)\n  → Skeptic-Judge for HIGH/CRIT\n\nIncludes:\n  · NEXTUP combinatorial puzzle-piece analysis\n    (8-15 sonnet hypothesis agents, k=4)\n  · Breadth re-scan + per-contract analysis\n  · Invariant fuzz campaign (EVM)\n  · Medusa stateful fuzzing (EVM, if installed)\n  · Design stress testing\n  · Skeptic-Judge adversarial verification\n  · Fuzz variants in verification\n  · Low/Info findings verified\n\nScoring: 4-axis (Evidence, Consensus, Quality, RAG)"
     },
     {
       label: "Compare",
@@ -166,7 +170,7 @@ Set `TRACE_MODE = true` only if the user selects "Yes". Default is `false`. When
 
 ### Trace Mode Orchestrator Rule (only if TRACE_MODE == true)
 
-If `TRACE_MODE == true`, the orchestrator MUST, for the rest of this audit, append the `## Trace Mode: Error Surfacing` suffix block defined in `{NEXTUP_HOME}/rules/trace-mode.md` (section "Agent Error Surfacing Directive") to the END of every `Task(...)` prompt it spawns. This includes recon agents, breadth agents, inventory, semantic-invariant agents, depth agents, scanner agents, NEXTUP seeder/combinator agents, chain agents, verifiers, escalation verifiers, skeptic-judge, report tier writers, and the assembler. Substitute `{SCRATCHPAD}` with the run's scratchpad path before appending.
+If `TRACE_MODE == true`, the orchestrator MUST, for the rest of this audit, append the `## Trace Mode: Error Surfacing` suffix block defined in `{NEXTUP_HOME}/rules/trace-mode.md` (section "Agent Error Surfacing Directive") to the END of every `Task(...)` prompt it spawns. This includes recon agents, breadth agents, inventory, semantic-invariant agents, depth agents, scanner agents, NEXTUP extraction / hypothesis / combinator agents, chain agents, verifiers, escalation verifiers, skeptic-judge, report tier writers, and the assembler. Substitute `{SCRATCHPAD}` with the run's scratchpad path before appending.
 
 Effect: every agent learns to log non-fatal issues to `{SCRATCHPAD}/trace_issues.md` and continue rather than fail silently. The Phase 6d trace reconstructor ingests that file and surfaces its contents at the top of `AUDIT_TRACE.md`.
 
@@ -224,6 +228,44 @@ AskUserQuestion(questions=[{
 
 If the user selects local files or URL, ask them to provide the path or URL. Store as `DOCS_PATH`.
 
+### Step 0c.4: Trusted Roles (MANDATORY — prevents false-positive severity inflation)
+
+Docs sometimes describe the trust model obliquely (or not at all). Without explicit trusted-role input, the inventory agent infers trust from access-control patterns, which produces false positives: findings that depend on a FULLY_TRUSTED actor acting maliciously (e.g. "if the emergency multisig drains the vault...") stay at their nominal severity instead of being capped under the `[ASSUMPTION-DEP: TRUSTED-ACTOR]` rule.
+
+This step asks the user to declare roles they consider FULLY_TRUSTED. The Inventory Agent (Phase 4a Task 1.5) downgrades any finding whose entire attack path requires a FULLY_TRUSTED actor by one severity tier (floor: Informational).
+
+```
+AskUserQuestion(questions=[{
+  question: "Are there roles you consider FULLY_TRUSTED? (e.g. timelocked governance multisig, DAO, emergency pauser — attacks that require these roles to act maliciously will be severity-capped)",
+  header: "Trusted",
+  multiSelect: false,
+  options: [
+    {
+      label: "None / infer from code",
+      description: "All actors treated as UNTRUSTED or SEMI_TRUSTED unless code enforces explicit bounds. Standard for unknown protocols and competitive audits."
+    },
+    {
+      label: "Use role trust file",
+      description: "I have a file (text / markdown / JSON) listing roles and their trust levels"
+    },
+    {
+      label: "List trusted roles inline",
+      description: "I'll type a short list (e.g. 'EMERGENCY_MULTISIG, TREASURY, GOVERNANCE_TIMELOCK')"
+    }
+  ]
+}])
+```
+
+- If "None / infer from code" → leave `TRUSTED_ROLES_PATH` and `TRUSTED_ROLES_TEXT` empty. Inventory falls back to pattern-based inference (the current behavior).
+- If "Use role trust file" → use the two-round pattern (first ask format confirmation, then ask path via `Other` field). Store as `TRUSTED_ROLES_PATH`. Accept `.md`, `.txt`, `.json`, `.yaml` — any format.
+- If "List trusted roles inline" → `AskUserQuestion` with a single "Type trusted roles" option and let the user put the list in the `Other` field. Store as `TRUSTED_ROLES_TEXT`.
+
+Both `TRUSTED_ROLES_PATH` and `TRUSTED_ROLES_TEXT` (if set) are passed to Phase 1 Recon Agent 1B as explicit inputs to its Trust Assumption Table. Agent 1B MUST include every role the user declared trusted, verbatim, with `FULLY_TRUSTED` trust level and `Source: user-declared` before inferring any additional roles from code.
+
+Argument shortcut: `trusted:<path-or-text>` — if the value contains `/` or ends in `.md`/`.txt`/`.json`/`.yaml`, treat as `TRUSTED_ROLES_PATH`; otherwise as `TRUSTED_ROLES_TEXT`. Example: `/nextup thorough trusted:EMERGENCY_MULTISIG,TREASURY_DAO`.
+
+Argument shortcut: `notrusted` — set both to empty, skip this step.
+
 ### Step 0c.5: Scope
 
 Use `AskUserQuestion` to ask about scope constraints:
@@ -278,6 +320,76 @@ AskUserQuestion(questions=[{
 
 If "Yes", set `PROVEN_ONLY = true`.
 
+### Step 0c.7: Report Primer + Output Folder (MANDATORY)
+
+The Phase 6 report pipeline writes findings to disk. Two variables govern that write: the primer (which controls prose style and file naming convention) and the output folder (which controls where the files land). Without explicit input, the pipeline defaults to a single monolithic `AUDIT_REPORT.md` at the project root, which is the format that stalled the Phase 6 single-writer agent on the Divigent run.
+
+First, list available primers by reading `{NEXTUP_HOME}/primers/` directly:
+
+```bash
+ls "{NEXTUP_HOME}/primers/"
+```
+
+Build option labels from the filenames (e.g., `sherlock.md` → "Sherlock (per-finding files, C/H/M/L/I prefixes)"). Always include a "Default / monolithic" option that writes a single `AUDIT_REPORT.md`.
+
+```
+AskUserQuestion(questions=[{
+  question: "Which report format should the Phase 6 pipeline use?",
+  header: "Primer",
+  multiSelect: false,
+  options: [
+    {
+      label: "Sherlock (per-finding files)",
+      description: "Writes C-01.md, H-01.md, M-01.md, L-01.md, I-01.md plus SUMMARY.md index under the output folder. Use for Sherlock-style contest reports."
+    },
+    {
+      label: "Default / monolithic",
+      description: "Writes one AUDIT_REPORT.md with all findings inline. Use for private audits and risk-registry deliverables."
+    }
+    // Add one option per additional primer discovered in primers/ directory
+  ]
+}])
+```
+
+Store as `REPORT_PRIMER`. Map: "Sherlock..." → `sherlock`, "Default / monolithic" → `default`, etc.
+
+Then ask for output folder:
+
+```
+AskUserQuestion(questions=[{
+  question: "Where should the report be written?",
+  header: "Output",
+  multiSelect: false,
+  options: [
+    {
+      label: "Project root (AUDIT_REPORT.md or audit/)",
+      description: "Writes to {PROJECT_PATH}/AUDIT_REPORT.md (monolithic) or {PROJECT_PATH}/audit/ (sherlock). Easy to find; tracked by git."
+    },
+    {
+      label: "Scratchpad (.nextup_scratchpad/report/)",
+      description: "Writes under the pipeline scratchpad. Keeps the report out of git history until you choose to move it."
+    },
+    {
+      label: "Custom folder",
+      description: "I'll type a path (absolute or relative to PROJECT_PATH)"
+    }
+  ]
+}])
+```
+
+- If "Project root" AND primer = `default` → `REPORT_OUTPUT = {PROJECT_PATH}/AUDIT_REPORT.md`.
+- If "Project root" AND primer = `sherlock` → `REPORT_OUTPUT = {PROJECT_PATH}/audit/`.
+- If "Scratchpad" → `REPORT_OUTPUT = {SCRATCHPAD}/report/` (create if absent).
+- If "Custom folder" → use the `Other` field to collect the path. Resolve relative paths against `PROJECT_PATH`. Create the directory if absent. For monolithic primer, append `/AUDIT_REPORT.md`; for per-finding primer, use the directory directly.
+
+Argument shortcuts:
+- `primer:sherlock` or `primer:default` → sets `REPORT_PRIMER`.
+- `report_folder:<path>` → sets `REPORT_OUTPUT` (path resolution as above).
+
+Both `REPORT_PRIMER` and `REPORT_OUTPUT` are passed to Phase 6 (`rules/phase6-report-prompts.md`). Phase 6 tier writers and the assembler MUST use the primer-specific filename convention (e.g., Sherlock: one file per finding under the output folder; default: monolithic).
+
+Display the resolved `REPORT_OUTPUT` back to the user in the Launch Summary table (Step 0d.2).
+
 ### Step 0d: Cost Estimate + Launch Confirmation
 
 Before starting the pipeline, get a cost estimate by calling `nextup.py`'s `estimate_cost()` function directly via Bash. Do NOT calculate costs manually — the Python function is the single source of truth.
@@ -323,11 +435,14 @@ Output as a formatted markdown block:
 | **Target** | `{PROJECT_PATH}` |
 | **Network** | {NETWORK} |  ← only if set
 | **Docs** | {docs status or "none"} |
+| **Trusted roles** | {TRUSTED_ROLES_PATH basename OR inline list OR "infer from code"} |
 | **Scope** | {SCOPE_FILE basename or "full project"} |  ← only if set
 | **Notes** | {SCOPE_NOTES} |  ← only if set
 | **Proven-only** | ON — unproven findings capped at Low |  ← only if true
+| **Primer** | {REPORT_PRIMER} (sherlock / default / ...) |
+| **Report output** | `{REPORT_OUTPUT}` |
 | **Codebase** | ~{lines} lines, {files} files{" (scoped)" if scoped} |
-| **Agents** | ~{agents} (+1 NEXTUP seeder) |
+| **Agents** | ~{agents} (includes NEXTUP extraction + hypothesis agents per mode) |
 | **Tokens** | ~{input_mtok}M in / ~{output_mtok}M out |
 | **API cost** | ~${api_cost} USD |
 | **Pro** | ~{pct_pro}% of weekly allowance |  ← with severity indicator
@@ -442,7 +557,7 @@ Detect the target language before anything else:
 
 ## WORKFLOW OVERVIEW
 
-> **ARCHITECTURE**: Recon → Instantiation → Parallel Breadth → Inventory → [Core/Thorough: Semantic Invariants] → **NEXTUP Seeder** → Adaptive Depth Loop → Chain Analysis → Verification → Report
+> **ARCHITECTURE**: Recon → Instantiation → Parallel Breadth → **NEXTUP Combinatorial (Extract / Combine / Hypothesize)** → Inventory (dedups breadth + NEXTUP + static) → [Core/Thorough: Semantic Invariants] → Adaptive Depth Loop → Chain Analysis → Verification → Report
 
 | Phase | Agent(s) | Output | Light | Core | Thorough |
 |-------|----------|--------|-------|------|----------|
@@ -450,9 +565,9 @@ Detect the target language before anything else:
 | **Phase 2** | Orchestrator | Instantiated prompts | All | All | All |
 | **Phase 3** | Breadth Agents | Findings files | 2-3 sonnet | 2-7 opus | 2-7 opus |
 | **Phase 3b** | Re-Scan + Per-Contract | Masked findings | Skip | Skip | Thorough only |
-| **Phase 4a** | Inventory Agent | Findings inventory | 1 sonnet | 1 sonnet | 1 sonnet |
+| **Phase 4a.NX** | **NEXTUP Combinatorial** | **pieces.json, combos_ranked.json, hypotheses_batch_*.json, investigation_targets.md** | **1 sonnet (hypothesize skipped)** | **1 sonnet + 5-8 sonnet hypothesis** | **1 sonnet + 8-15 sonnet hypothesis** |
+| **Phase 4a** | Inventory Agent | Findings inventory (deduplicated across breadth + NEXTUP + static) | 1 sonnet | 1 sonnet | 1 sonnet |
 | **Phase 4a.5** | Semantic Invariant Agent | Write-sites + invariants | Skip | Pass 1 | Pass 1+2 |
-| **Phase 4a.NX** | **NEXTUP Seeder** | **investigation_targets.md** | **1 sonnet** | **1 sonnet** | **1 sonnet** |
 | **Phase 4b** | Depth Loop | Deep analysis | 4 merged sonnet, no scoring | 8+ agents, 2-axis scoring | 8+ agents, 4-axis scoring |
 | **Phase 4c** | Chain Analysis | Hypotheses + chains | 1 sonnet (merged) | 2 agents | 2 agents + iter 2 |
 | **Phase 5** | Verifiers | PoC tests (Medium+) | Medium+ (sonnet) | Medium+ | ALL severities + fuzz |
@@ -616,10 +731,10 @@ After all return:
 
 | Step | Prompt File | Agent | Trigger |
 |------|-------------|-------|---------|
-| 4a | `{NEXTUP_HOME}/prompts/{LANGUAGE}/phase4a-inventory-prompt.md` | Inventory (+ side effect trace) | Always |
+| **4a.NX** | (inline Phase 4a.NX section below) | **NEXTUP Extract + Combine + Hypothesize (sonnet)** | **Always** |
+| 4a | `{NEXTUP_HOME}/prompts/{LANGUAGE}/phase4a-inventory-prompt.md` | Inventory (+ side effect trace, dedups across sources) | Always |
 | 3b | `{NEXTUP_HOME}/rules/phase3b-rescan-prompt.md` | Breadth Re-Scan (sonnet) | Thorough only (after 4a) |
 | 4a.5 | (inline below) | Semantic Invariant Agent (sonnet) | Core/Thorough |
-| **4a.NX** | `{NEXTUP_HOME}/SKILL.md` | **NEXTUP Seeder (sonnet)** | **Always** |
 | 4b (loop) | `{NEXTUP_HOME}/prompts/{LANGUAGE}/phase4b-loop.md` | Orchestrator | Always |
 | 4b (depth) | `{NEXTUP_HOME}/prompts/{LANGUAGE}/phase4b-depth-templates.md` | 4 Depth Agents | Always |
 | 4b (scanners) | `{NEXTUP_HOME}/prompts/{LANGUAGE}/phase4b-scanner-templates.md` | 3 Scanners + Validation + Design Stress | Always |
@@ -637,12 +752,12 @@ After all return:
 ### Phase 4a.5: Semantic Invariant Pre-Computation
 
 > **Skip in Light mode.** Depth agents read `state_variables.md` directly.
-> **Timeout fallback**: If the semantic invariant agent times out or fails, proceed to Phase 4a.NX without `semantic_invariants.md`. Depth agents fall back to reading `state_variables.md` directly (same as Light mode). Log: "Phase 4a.5 TIMEOUT — depth agents using state_variables.md fallback."
+> **Timeout fallback**: If the semantic invariant agent times out or fails, proceed to Phase 4b without `semantic_invariants.md`. Depth agents fall back to reading `state_variables.md` directly (same as Light mode). Log: "Phase 4a.5 TIMEOUT — depth agents using state_variables.md fallback."
 
 > **Purpose**: Enumerate write sites, define semantic invariants, group variables into semantic clusters. Pass 2 (Thorough only) reverses direction for function→cluster coverage and recursive stale-read traces.
 > **Models**: Pass 1 sonnet, Pass 2 sonnet (sequential)
 
-Spawn between Phase 4a (inventory) and Phase 4a.NX (NEXTUP seeder).
+Spawn after Phase 4a (inventory) completes. Runs before Phase 4b depth.
 
 **Pass 1 Agent** (Variable → Write Sites + Semantic Clustering):
 
@@ -755,22 +870,23 @@ Return: 'DONE: {G} cluster_gaps, {T} consequence traces ({D} deep_propagation), 
 
 ---
 
-### Phase 4a.NX: NEXTUP Combinatorial Seeder (NEW)
+### Phase 4a.NX: NEXTUP Combinatorial Analysis
 
-> **Trigger**: Always. Runs after Phase 4a.5 completes (or in parallel with 4a.5 — no dependency).
-> **Purpose**: Extract puzzle pieces from source code, combine them statically (zero tokens), eliminate impossible combinations, and generate investigation targets for depth agents.
-> **Budget**: 1 sonnet agent (extraction) + Python combinator (zero tokens)
-> **Failure mode**: If NEXTUP fails, log warning and proceed to Phase 4b without investigation targets. NEXTUP failure never blocks the pipeline.
-
-Read the NEXTUP skill definition at `{NEXTUP_HOME}/SKILL.md`.
+> **Trigger**: Always. Runs AFTER Phase 3 breadth and BEFORE Phase 4a inventory (so inventory can dedup NEXTUP hypotheses into the same finding table as breadth and static-analysis findings).
+> **Purpose**: Extract puzzle pieces from source, combine statically (zero tokens), hypothesize exploits from surviving combinations, and produce investigation targets for Phase 4b depth agents.
+> **Output artifacts**: `pieces.json`, `combos_ranked.json`, `hypotheses_batch_*.json`, `investigation_targets.md` under `{SCRATCHPAD}/nextup/`.
+> **Failure mode**: If extraction or combinator fails, log warning and proceed. Hypothesize step is skipped on upstream failure; depth agents fall back to no investigation targets. Phase 4a inventory still runs normally with breadth + static-analysis sources only.
+> **Reference file**: hypothesis agent prompt at `{NEXTUP_HOME}/hypothesis/hypothesis_agent.md`, extraction agent prompt at `{NEXTUP_HOME}/extraction/extract_agent.md`.
 
 #### NEXTUP Mode Configuration
 
-| NEXTUP_MODE | k | Top-N |
-|-------------|---|-------|
-| lightweight | 2 | 50 |
-| middleweight | 3 | 100 |
-| heavyw8t | 4 | 150 |
+| Audit MODE | NEXTUP_MODE | k | Top-N | Hypothesis agents |
+|------------|-------------|---|-------|-------------------|
+| Light      | lightweight | 2 | 50  | SKIP (extract + combine + targets only) |
+| Core       | middleweight | 3 | 100 | 5-8 sonnet (parallel) |
+| Thorough   | heavyw8t    | 4 | 150 | 8-15 sonnet (parallel) |
+
+Light mode runs only NX-1, NX-2, and NX-4. Step NX-3 (HYPOTHESIZE) is skipped to stay within the Pro-plan agent budget. Core and Thorough run all steps.
 
 #### Step NX-1: Spawn Extraction Agent
 
@@ -824,13 +940,54 @@ The combinator script is per-language (`combine_evm.py`, `combine_solana.py`, `c
 
 If Python not available, try `python` instead of `python3`. If both fail, log warning and skip to Phase 4b.
 
-Read script output for stats. If 0 survivors, log warning and skip to Phase 4b.
+Read script output for stats. If 0 survivors, log warning and skip to Phase 4a (no NX-3, no NX-4).
 
-#### Step NX-3: Generate Investigation Targets (Orchestrator Inline)
+#### Step NX-3: Spawn Hypothesis Agents (Parallel)
+
+Skip this step entirely when `MODE == light` (lightweight NEXTUP_MODE). Core and Thorough run it.
+
+Read `{NEXTUP_DIR}/combos_ranked.json` and split the combinations array into batches of 10 to 15.
+
+Determine agent count from NEXTUP_MODE:
+- middleweight: `min(num_batches, 8)` sonnet agents
+- heavyw8t: `min(num_batches, 15)` sonnet agents
+
+For each batch, write `{NEXTUP_DIR}/combo_batch_N.json`.
+
+Read the hypothesis agent prompt from `{NEXTUP_HOME}/hypothesis/hypothesis_agent.md`.
+
+Spawn ALL hypothesis agents in a SINGLE message (parallel execution):
+
+```
+Agent(subagent_type="general-purpose", model="sonnet", prompt="
+{PASTE HYPOTHESIS AGENT PROMPT with these replacements:}
+- {COMBOS_PATH} = {NEXTUP_DIR}/combo_batch_N.json
+- {OUTPUT_PATH} = {NEXTUP_DIR}/hypotheses_batch_N.json
+- {SCOPE_PATH} = {PROJECT_PATH}
+
+## Breadth Context
+You have access to the breadth analysis already produced for this audit:
+- {SCRATCHPAD}/analysis_*.md — breadth findings already flagged by domain agents.
+
+Priority guard: puzzle-piece combinations that breadth agents have NOT flagged are higher priority than combinations that re-confirm existing breadth findings. Before emitting a hypothesis, check `{SCRATCHPAD}/analysis_*.md` for a finding at the same location with matching mechanism. If one exists and you cannot add stricter source evidence (direct code trace through the full attack path) or orthogonal attack steps, mark the combination `INFEASIBLE-BREADTH-DUP` rather than hypothesizing a duplicate.
+
+Read your combo batch file. For each combination:
+1. Read the source at every referenced location.
+2. Apply the priority guard above.
+3. Emit a hypothesis (FEASIBLE / CONDITIONAL with fields: title, severity, code_refs, puzzle_pieces, attack_steps, preconditions) OR mark INFEASIBLE / INFEASIBLE-BREADTH-DUP.
+4. Write results to your output file.
+
+SCOPE: Write ONLY to your assigned output file. Do NOT read or write other agents' output files. Return your findings and stop.
+")
+```
+
+Wait for ALL agents to complete. Apply timeout split-and-retry if any agent times out (same policy as breadth and depth).
+
+#### Step NX-4: Generate Investigation Targets (Orchestrator Inline)
 
 Read `{NEXTUP_DIR}/combos_ranked.json`. Transform the top combinations into investigation questions for depth agents.
 
-Write `{NEXTUP_DIR}/investigation_targets.md` — see `{NEXTUP_HOME}/SKILL.md` Phase 2b for the full format and routing rules.
+Write `{NEXTUP_DIR}/investigation_targets.md`.
 
 **Routing rules** — assign each combination to a depth domain based on its categories:
 | Categories in combo | Primary depth domain |
@@ -843,7 +1000,7 @@ Write `{NEXTUP_DIR}/investigation_targets.md` — see `{NEXTUP_HOME}/SKILL.md` P
 
 Each target is a focused question, not a conclusion. Tell the depth agent WHAT to investigate, not WHAT to find.
 
-#### Step NX-4: Inject Targets into Depth Agent Prompts
+#### Step NX-5: Inject Targets into Depth Agent Prompts
 
 When composing Phase 4b depth agent prompts, append the relevant section from `investigation_targets.md`:
 
@@ -876,11 +1033,12 @@ If a depth agent's section is empty (no targets for that domain), skip the injec
 Print stats:
 
 ```
-=== NEXTUP Seeder Complete ===
+=== NEXTUP Combinatorial Analysis Complete ===
 Pieces extracted: {N}
 Combinations generated: {total} (elimination rate: {X}%)
+Hypotheses: {H} total ({F} feasible, {C} conditional, {I} infeasible, {D} INFEASIBLE-BREADTH-DUP)  [SKIPPED in Light]
 Investigation targets: {T} across {D} depth domains
-Proceeding to Phase 4b with NEXTUP targets injected...
+Proceeding to Phase 4a (inventory will dedup NEXTUP hypotheses into findings_inventory.md)...
 ```
 
 ---
@@ -917,7 +1075,7 @@ The orchestrator runs the full loop autonomously:
 1. **Light mode override**: When `MODE == light`, skip the standard 8-agent spawn. Instead spawn 4 merged sonnet agents per Light Mode Orchestration override #5: (a) combined token-flow + state-trace, (b) combined edge-case + external, (c) combined scanner A+B+C, (d) validation sweep. No niche agents, no injectable investigation agents. Iteration 1 only, no confidence scoring. After iteration 1 completes, proceed directly to Phase 4c chain analysis (single merged agent per override #6).
 
 1. **Iteration 1 (Core/Thorough)**: Spawn ALL 8 standard agents + niche agents in parallel:
-   - 4 depth agents (token-flow, state-trace, edge-case, external) — **with NEXTUP investigation targets injected per Step NX-4**
+   - 4 depth agents (token-flow, state-trace, edge-case, external) — **with NEXTUP investigation targets injected per Step NX-5**
    - Blind Spot Scanner A (Tokens & Parameters)
    - Blind Spot Scanner B (Guards, Visibility & Inheritance + Override Safety)
    - Blind Spot Scanner C (Role Lifecycle, Capability Exposure & Reachability)
@@ -1050,5 +1208,6 @@ Quick checks before verification:
 - [ ] Chain analysis completed enabler enumeration?
 - [ ] Worst-state severity used? (Rule 10)
 - [ ] Anti-normalization check applied? (Rule 13)
-- [ ] **NEXTUP seeder completed? (Phase 4a.NX)**
+- [ ] **NEXTUP combinatorial analysis completed? (Phase 4a.NX, before Phase 4a)**
+- [ ] **NEXTUP hypotheses deduplicated into findings_inventory.md?**
 - [ ] **NEXTUP investigation targets injected into depth agents?**

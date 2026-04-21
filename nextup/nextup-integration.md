@@ -1,201 +1,120 @@
-# NEXTUP Integration Guide
+# NEXTUP Integration Reference
 
-> **For the NEXTUP orchestrator**: How to call NEXTUP combinatorial analysis as a hypothesis seeder between Phase 4a and Phase 4b.
-> **Principle**: NEXTUP findings are **purely additive**. They inject investigation questions into depth agents — they never replace, override, or conflict with standard NEXTUP findings.
-
----
-
-## When to Call NEXTUP
-
-NEXTUP combinatorial analysis runs **after Phase 4a (Inventory)** completes and **before Phase 4b (Depth Loop)** begins.
-
-```
-Phase 4a: Inventory Agent → findings_inventory.md
-    ↓
-Phase 4a.5: Semantic Invariants (runs in parallel with NEXTUP)
-    ↓
-NEXTUP Seeder: Extract → Combine → investigation_targets.md
-    ↓
-Phase 4b: Depth Loop (depth agents receive NEXTUP targets as additive context)
-```
-
-NEXTUP and Phase 4a.5 (Semantic Invariants) can run **in parallel** — they have no dependencies on each other.
+> How Phase 4a.NX fits into the NEXTUP audit pipeline. The orchestrator-facing steps live in `nextup-command.md`; this file explains the contract between NEXTUP and the phases around it.
 
 ---
 
-## How to Call NEXTUP
-
-The NEXTUP orchestrator spawns the combinatorial analysis as a single agent call:
+## Ordering
 
 ```
-Agent(subagent_type="general-purpose", model="sonnet", prompt="
-Read the skill definition at {NEXTUP_HOME}/SKILL.md and follow its instructions exactly.
-
-Arguments: nextup-seeder {NEXTUP_MODE} {SCOPE_PATH}
-
-Environment:
-- NEXTUP_SCRATCHPAD = {SCRATCHPAD}
-- The following recon artifacts are available:
-  - {SCRATCHPAD}/state_variables.md
-  - {SCRATCHPAD}/function_list.md
-  - {SCRATCHPAD}/attack_surface.md
-  - {SCRATCHPAD}/build_status.md
-")
+Phase 3: Breadth Agents              → analysis_*.md
+    ↓
+Phase 4a.NX: NEXTUP Combinatorial    → pieces.json
+                                       combos_ranked.json
+                                       hypotheses_batch_*.json  (Core/Thorough)
+                                       investigation_targets.md
+    ↓
+Phase 4a: Inventory Agent            → findings_inventory.md (deduplicated across breadth + NEXTUP + static)
+    ↓
+Phase 4a.5: Semantic Invariants      (Core/Thorough, runs after inventory)
+    ↓
+Phase 4b: Adaptive Depth Loop        (depth agents receive NEXTUP investigation targets)
 ```
 
-### Mode Selection for NEXTUP
+Phase 4a.NX is a mandatory step in all modes. It runs serially after breadth and before inventory; there is no parallel-with-inventory path because inventory depends on the hypothesis output.
 
-The NEXTUP orchestrator selects combinatorial mode based on audit mode:
+---
 
-| NEXTUP Mode | Combinatorial Mode | Rationale |
-|-------------|-------------|-----------|
-| Light | `lightweight` (k=2) | Minimal budget, pairs only |
-| Core | `middleweight` (k=3) | Balanced — triples catch most interaction bugs |
-| Thorough | `heavyw8t` (k=4) | Maximum depth — quads find complex multi-step interactions |
+## Mode Selection
 
-No interactive mode picker in seeder mode — the NEXTUP orchestrator decides.
+Audit mode drives NEXTUP_MODE and agent budget:
+
+| Audit MODE | NEXTUP_MODE  | k | Top-N | Hypothesis agents |
+|------------|--------------|---|-------|-------------------|
+| Light      | lightweight  | 2 | 50    | SKIP              |
+| Core       | middleweight | 3 | 100   | 5-8 sonnet        |
+| Thorough   | heavyw8t     | 4 | 150   | 8-15 sonnet       |
+
+Light mode runs only NX-1 (extract), NX-2 (combine), NX-4 (investigation targets), and NX-5 (inject into depth). NX-3 (hypothesize) is skipped to keep the Pro-plan agent count inside budget.
 
 ---
 
 ## What NEXTUP Produces
 
-In seeder mode, NEXTUP writes one file:
+All artifacts land under `{SCRATCHPAD}/nextup/`.
 
-```
-{SCRATCHPAD}/nextup/investigation_targets.md
-```
-
-This file contains investigation questions organized by depth domain:
-
-| Section | Target Depth Agent |
-|---------|-------------------|
-| `## For depth-token-flow` | depth-token-flow |
-| `## For depth-state-trace` | depth-state-trace |
-| `## For depth-edge-case` | depth-edge-case |
-| `## For depth-external` | depth-external |
-
-Each target has:
-- **NX-{DOMAIN}-{N}** ID (e.g., NX-TF-1, NX-ST-3)
-- **Pieces**: Which puzzle pieces interact
-- **Shared state**: The state variables connecting them
-- **Investigate**: A focused question — WHAT to investigate, not WHAT to find
-- **Code refs**: Exact file:line references
+| File | Writer | Consumer |
+|------|--------|----------|
+| `pieces.json` | NX-1 extraction agent | NX-2 combinator |
+| `combos_ranked.json` | NX-2 combinator (Python, zero tokens) | NX-3, NX-4 |
+| `combo_batch_N.json` | Orchestrator (split for parallel) | NX-3 hypothesis agents |
+| `hypotheses_batch_N.json` | NX-3 hypothesis agents | Phase 4a inventory TASK 1.0 |
+| `investigation_targets.md` | NX-4 orchestrator inline | Phase 4b depth agents (via NX-5 injection) |
 
 ---
 
-## How to Inject Targets into Depth Agents
+## Phase 4a Inventory Contract
 
-After NEXTUP completes, the orchestrator reads `{SCRATCHPAD}/nextup/investigation_targets.md` and appends the relevant section to each depth agent's prompt.
+Phase 4a reads `{SCRATCHPAD}/nextup/hypotheses_batch_*.json` as a third finding source alongside breadth `analysis_*.md` and static-analysis promotions (Slither / sanitizers / detectors).
 
-### Injection Template
+TASK 1.0 (Cross-Source Deduplication) in `prompts/{LANGUAGE}/phase4a-inventory-prompt.md` defines dedup priority:
 
-For each depth agent prompt in Phase 4b, append:
+1. Breadth finding with completed PoC wins outright.
+2. Breadth finding without PoC loses only to a NEXTUP hypothesis with stricter source evidence.
+3. NEXTUP vs NEXTUP: higher feasibility, then higher severity, then higher combo score.
+4. Static-detector survives only when alone.
 
-```markdown
-## Additional Investigation Targets (from NEXTUP Combinatorial Analysis)
+Survivors keep their original IDs (`[XX-N]` for breadth, `[SLITHER-N]` / `[SD-N]` / `[SAN-N]` for static). NEXTUP survivors with no breadth match get sequential `[NX-N]` IDs. Dropped losers go into a `## Dedup Trail` appendix so chain analysis and the final report can trace origin.
 
-The following interaction patterns were identified by static combination of code patterns.
-These are ADDITIONAL investigation questions — investigate them alongside your standard methodology.
-Do NOT skip your standard analysis to focus on these. Treat them as bonus leads.
+---
 
-{PASTE RELEVANT SECTION FROM investigation_targets.md}
+## Phase 4b Depth Contract
 
-When you investigate a NEXTUP target:
-- Tag findings originating from NEXTUP targets with [NX-{ID}] in the finding title
-- Use standard finding format (same as all other findings)
-- Apply the same severity matrix and evidence standards
-- If a NEXTUP target overlaps with something you already found via standard analysis,
-  note the overlap but do NOT create a duplicate finding
-```
-
-### Domain Routing
+Phase 4b depth agent prompts append the relevant section from `investigation_targets.md`.
 
 | Depth Agent | Gets Section |
-|-------------|-------------|
+|-------------|--------------|
 | depth-token-flow | `## For depth-token-flow` |
 | depth-state-trace | `## For depth-state-trace` |
 | depth-edge-case | `## For depth-edge-case` |
 | depth-external | `## For depth-external` |
 
-If a depth agent's section is empty (no targets for that domain), skip the injection for that agent.
+Empty sections skip injection. Depth findings originating from a NEXTUP target tag the finding title with `[NX-{TARGET_ID}]`. Severity matrix and evidence standards are unchanged.
 
 ---
 
-## Additive Guarantee
+## Priority Guard (NX-3)
 
-NEXTUP targets are **investigation questions**, not findings. They flow through the standard NEXTUP pipeline:
+Every hypothesis agent receives this guard in its prompt so hypotheses do not duplicate breadth findings without adding value:
 
-1. **Depth agents** investigate NEXTUP targets alongside their standard methodology
-2. **Findings** from NEXTUP targets use standard finding format with `[NX-{ID}]` tag
-3. **Chain analysis** processes NEXTUP-originated findings the same as any other
-4. **Verification** treats NEXTUP-originated findings identically
-5. **Report** includes NEXTUP-originated findings in the standard severity tiers
+> Puzzle-piece combinations that breadth agents have NOT flagged are higher priority than combinations that re-confirm existing breadth findings. Before emitting a hypothesis, check `{SCRATCHPAD}/analysis_*.md` for a finding at the same location with matching mechanism. If one exists and you cannot add stricter source evidence (direct code trace through the full attack path) or orthogonal attack steps, mark the combination `INFEASIBLE-BREADTH-DUP` rather than hypothesizing a duplicate.
 
-### What "Additive" Means
-
-- NEXTUP targets **never replace** standard depth agent methodology
-- NEXTUP targets **never override** existing findings
-- If NEXTUP suggests investigating something already covered → depth agent notes the overlap, no duplicate
-- If NEXTUP suggests something the standard methodology missed → depth agent investigates it as a bonus lead
-- The depth agent's standard output is never reduced or redirected by NEXTUP targets
-
-### Deduplication
-
-NEXTUP-originated findings may overlap with standard findings. Dedup happens naturally:
-
-1. **Same root cause found via both paths**: Keep the one with stronger evidence. Note `[NX-{ID}]` contributed to discovery.
-2. **NEXTUP target leads to genuinely new finding**: Tag as `[NX-{ID}]` in finding title. It flows through chain analysis, verification, and report normally.
-3. **NEXTUP target is infeasible**: Depth agent skips it (just like any other dead-end investigation).
+`INFEASIBLE-BREADTH-DUP` counts toward the infeasible total in Phase 4a.NX stats; it does not feed inventory.
 
 ---
 
 ## Budget Impact
 
-| Component | Cost | Model |
-|-----------|------|-------|
-| NEXTUP extraction agent | 1 agent | sonnet |
-| NEXTUP combinator | 0 (Python script) | - |
-| Target generation | 0 (orchestrator inline) | - |
-| Depth agent injection | 0 (appended to existing prompts) | - |
-| **Total additional** | **1 sonnet agent** | |
-
-NEXTUP adds exactly 1 sonnet agent to the pipeline. All other work piggybacks on existing depth agents.
+| Component | Light | Core | Thorough |
+|-----------|-------|------|----------|
+| Extraction agent (NX-1) | 1 sonnet | 1 sonnet | 1 sonnet |
+| Combinator (NX-2) | 0 (Python) | 0 (Python) | 0 (Python) |
+| Hypothesis agents (NX-3) | 0 (SKIP) | 5-8 sonnet | 8-15 sonnet |
+| Investigation targets (NX-4) | 0 (inline) | 0 (inline) | 0 (inline) |
+| Injection (NX-5) | 0 (prompt append) | 0 (prompt append) | 0 (prompt append) |
+| Phase 4a.NX total | 1 sonnet | 6-9 sonnet | 9-16 sonnet |
 
 ---
 
 ## Failure Handling
 
+NEXTUP never blocks the pipeline. All failures degrade to running the rest of the pipeline without NEXTUP's contribution:
+
 | Failure | Action |
 |---------|--------|
-| NEXTUP extraction returns 0 pieces | Log warning, skip injection, proceed with standard Phase 4b |
-| NEXTUP combinator returns 0 survivors | Log warning, skip injection, proceed with standard Phase 4b |
-| NEXTUP agent crashes/times out | Log warning, skip injection, proceed with standard Phase 4b |
-| investigation_targets.md is empty | Skip injection, proceed with standard Phase 4b |
-
-NEXTUP failure never blocks the pipeline. It is a best-effort enhancement.
-
----
-
-## Example Orchestrator Code
-
-```python
-# After Phase 4a completes, before Phase 4b:
-
-# Spawn NEXTUP in parallel with Phase 4a.5 (semantic invariants)
-nextup_agent = Agent(
-    subagent_type="general-purpose",
-    model="sonnet",
-    run_in_background=True,
-    prompt=f"""
-    Read {NEXTUP_HOME}/SKILL.md and follow its instructions.
-    Arguments: nextup-seeder {nextup_mode} {scope_path}
-    NEXTUP_SCRATCHPAD = {scratchpad}
-    """
-)
-
-# ... spawn semantic invariant agents ...
-
-# Before Phase 4b, check if NEXTUP completed
-# If investigation_targets.md exists, read it and inject into depth prompts
-# If not, proceed without NEXTUP targets
-```
+| NX-1 extraction returns 0 pieces | Skip NX-2 through NX-5; inventory runs on breadth + static only. |
+| NX-2 combinator returns 0 survivors | Skip NX-3 through NX-5. |
+| Python not available | Log `NEXTUP_DISABLED: python_missing` to `violations.md`; skip all of Phase 4a.NX. |
+| NX-3 hypothesis agent times out | Split-and-retry per the timeout policy (max 2 lite agents per failed slot). |
+| All NX-3 agents fail | Log warning; `investigation_targets.md` still produced; inventory runs without skill hypotheses. |
+| `investigation_targets.md` empty | Skip NX-5 injection for that domain; depth agents run without NEXTUP targets. |
